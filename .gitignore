@@ -1,0 +1,4 @@
+./target
+./guest/target
+./host/target
+./garbled-snark-verifier/target

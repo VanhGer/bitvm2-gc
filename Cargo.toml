@@ -1,0 +1,33 @@
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.80"
+repository = "https://github.com/GOATNetwork/verifiable-circuit"
+keywords = ["Bitcoin", "zkRollup", "zkVM", "BitVM3"]
+categories = ["cryptography"]
+
+[workspace]
+members = [
+    "garbled-snark-verifier",
+    "guest",
+    "host",
+]
+
+resolver = "2"
+
+[workspace.dependencies]
+garbled-snark-verifier = { path = "./garbled-snark-verifier" }
+
+
+[profile.release]
+opt-level = 3
+[profile.bench]
+opt-level = 3
+
+[profile.fast]
+inherits = "release"
+debug = true
+debug-assertions = true
+
+
