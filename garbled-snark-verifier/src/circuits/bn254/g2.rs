@@ -1,8 +1,8 @@
+use crate::circuits::bn254::utils::SEED_U64;
 use crate::{bag::*, circuits::bn254::fq2::Fq2};
 use ark_ff::UniformRand;
-use rand_chacha::rand_core::SeedableRng;
-use rand::{Rng, rng};
 use rand_chacha::ChaCha20Rng;
+use rand_chacha::rand_core::SeedableRng;
 
 pub struct G2Projective;
 
@@ -26,7 +26,7 @@ impl G2Projective {
     }
 
     pub fn random() -> ark_bn254::G2Projective {
-        let mut prng = ChaCha20Rng::seed_from_u64(rng().random());
+        let mut prng = ChaCha20Rng::seed_from_u64(SEED_U64);
         ark_bn254::G2Projective::rand(&mut prng)
     }
 
@@ -114,7 +114,7 @@ impl G2Affine {
     }
 
     pub fn random() -> ark_bn254::G2Affine {
-        let mut prng = ChaCha20Rng::seed_from_u64(rng().random());
+        let mut prng = ChaCha20Rng::seed_from_u64(SEED_U64);
         ark_bn254::G2Affine::rand(&mut prng)
     }
 

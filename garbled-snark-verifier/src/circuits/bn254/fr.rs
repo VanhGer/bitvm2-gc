@@ -1,9 +1,11 @@
-use crate::{bag::*, circuits::bn254::fp254impl::Fp254Impl};
+use crate::{
+    bag::*,
+    circuits::bn254::{fp254impl::Fp254Impl, utils::SEED_U64},
+};
 use ark_ff::UniformRand;
-use rand_chacha::rand_core::SeedableRng;
 use num_bigint::BigUint;
-use rand::{Rng, rng};
 use rand_chacha::ChaCha20Rng;
+use rand_chacha::rand_core::SeedableRng;
 
 pub struct Fr;
 
@@ -38,7 +40,7 @@ impl Fr {
     }
 
     pub fn random() -> ark_bn254::Fr {
-        let mut prng = ChaCha20Rng::seed_from_u64(rng().random());
+        let mut prng = ChaCha20Rng::seed_from_u64(SEED_U64);
         ark_bn254::Fr::rand(&mut prng)
     }
 

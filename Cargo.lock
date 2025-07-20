@@ -1691,9 +1691,9 @@ dependencies = [
 [[package]]
 name = "curve25519-dalek"
 version = "4.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97fb8b7c4503de7d6ae7b42ab72a5a59857b4c937ec27a3d4539dba95b5ab2be"
+source = "git+https://github.com/ziren-patches/curve25519-dalek?branch=patch-4.1.3#684e91463b1786f0091422d4b30a3d0c33831ef0"
 dependencies = [
+ "anyhow",
  "cfg-if",
  "cpufeatures",
  "curve25519-dalek-derive",
@@ -1701,13 +1701,13 @@ dependencies = [
  "rustc_version 0.4.1",
  "subtle",
  "zeroize",
+ "zkm-lib",
 ]
 
 [[package]]
 name = "curve25519-dalek-derive"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f46882e17999c6cc590af592290432be3bce0428cb0d5f8b6715e4dc7b383eb3"
+source = "git+https://github.com/ziren-patches/curve25519-dalek?branch=patch-4.1.3#684e91463b1786f0091422d4b30a3d0c33831ef0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2001,8 +2001,7 @@ checksum = "1c7a8fb8a9fbf66c1f703fe16184d10ca0ee9d23be5b4436400408ba54a95005"
 [[package]]
 name = "ecdsa"
 version = "0.16.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee27f32b5c5292967d2d4a9d7f1e0b0aed2c15daded5a60300e4abb9d8020bca"
+source = "git+https://github.com/ziren-patches/signatures?branch=patch-ecdsa-0.16.9#da0cd8753b243e09acf82f8e58f8da0e28e7287d"
 dependencies = [
  "der",
  "digest 0.10.7",
@@ -2798,11 +2797,12 @@ dependencies = [
  "ark-relations",
  "ark-serialize 0.5.0",
  "blake3",
+ "getrandom 0.2.16",
  "itertools 0.13.0",
  "num-bigint 0.4.6",
  "num-traits",
  "once_cell",
- "rand 0.9.1",
+ "rand 0.8.5",
  "rand_chacha 0.3.1",
  "serde",
  "serde_json",
@@ -3700,16 +3700,17 @@ dependencies = [
 [[package]]
 name = "k256"
 version = "0.13.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6e3919bbaa2945715f0bb6d3934a173d1e9a59ac23767fbaaef277265a7411b"
+source = "git+https://github.com/ziren-patches/elliptic-curves?branch=patch-k256-0.13.4#e7179899cbdf77d206c15a105c9a4296e8fabe6b"
 dependencies = [
  "cfg-if",
  "ecdsa",
  "elliptic-curve",
+ "hex",
  "once_cell",
  "serdect",
  "sha2",
  "signature",
+ "zkm-lib",
 ]
 
 [[package]]
@@ -4290,13 +4291,14 @@ checksum = "b15813163c1d831bf4a13c3610c05c0d03b39feb07f7e09fa234dac9b15aaf39"
 [[package]]
 name = "p256"
 version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9863ad85fa8f4460f9c48cb909d38a0d689dba1f6f6988a5e3e0d31071bcd4b"
+source = "git+https://github.com/ziren-patches/elliptic-curves?branch=patch-p256-0.13.2#61e6db8ba8193260d0cf3d7b9e40ddd44fe27f1b"
 dependencies = [
  "ecdsa",
  "elliptic-curve",
+ "hex",
  "primeorder",
  "sha2",
+ "zkm-lib",
 ]
 
 [[package]]
@@ -4970,9 +4972,8 @@ dependencies = [
 
 [[package]]
 name = "primeorder"
-version = "0.13.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "353e1ca18966c16d9deb1c69278edbc5f194139612772bd9537af60ac231e1e6"
+version = "0.13.1"
+source = "git+https://github.com/ziren-patches/elliptic-curves?branch=patch-p256-0.13.2#61e6db8ba8193260d0cf3d7b9e40ddd44fe27f1b"
 dependencies = [
  "elliptic-curve",
 ]
@@ -5434,8 +5435,7 @@ checksum = "95325155c684b1c89f7765e30bc1c42e4a6da51ca513615660cb8a62ef9a88e3"
 [[package]]
 name = "rfc6979"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8dd2a808d456c4a54e300a23e9f5a67e122c3024119acbfd73e3bf664491cb2"
+source = "git+https://github.com/ziren-patches/signatures?branch=patch-ecdsa-0.16.9#da0cd8753b243e09acf82f8e58f8da0e28e7287d"
 dependencies = [
  "hmac",
  "subtle",
@@ -8368,3 +8368,23 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
+
+[[patch.unused]]
+name = "rsa"
+version = "0.9.6"
+source = "git+https://github.com/ziren-patches/RustCrypto-RSA.git?branch=patch-rsa-0.9.6#65ede08a63e93354b7c540d503a824d3745b02eb"
+
+[[patch.unused]]
+name = "secp256k1"
+version = "0.29.1"
+source = "git+https://github.com/ziren-patches/rust-secp256k1?branch=patch-0.29.1#c7e39ee0732d0e6b5c33721038f8f1b789f77c36"
+
+[[patch.unused]]
+name = "sha2"
+version = "0.10.8"
+source = "git+https://github.com/ziren-patches/RustCrypto-hashes?branch=patch-sha2-0.10.8#62d9223ba171ef6d5b637b275c4b982f56d0a949"
+
+[[patch.unused]]
+name = "substrate-bn"
+version = "0.6.0"
+source = "git+https://github.com/ziren-patches/bn?branch=patch-0.6.0#aba71380457d798039111e6cc0fdf2e0718c6766"

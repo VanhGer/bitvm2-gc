@@ -1,5 +1,5 @@
 use crate::{bag::*, core::utils::bit_to_usize};
-use std::ops::{Add, AddAssign};
+use core::ops::{Add, AddAssign};
 
 // Except Xor, Xnor and Not, each enum's bitmask represent the boolean operation ((a XOR bit_2) AND (b XOR bit_1)) XOR bit_0
 #[repr(u8)]
@@ -49,12 +49,7 @@ pub struct Gate {
 
 impl Gate {
     pub fn new(wire_a: Wirex, wire_b: Wirex, wire_c: Wirex, gate_type: GateType) -> Self {
-        Self {
-            wire_a,
-            wire_b,
-            wire_c,
-            gate_type,
-        }
+        Self { wire_a, wire_b, wire_c, gate_type }
     }
 
     pub fn and(wire_a: Wirex, wire_b: Wirex, wire_c: Wirex) -> Self {
@@ -133,10 +128,9 @@ impl Gate {
     }
 
     pub fn evaluate(&mut self) {
-        self.wire_c.borrow_mut().set((self.f())(
-            self.wire_a.borrow().get_value(),
-            self.wire_b.borrow().get_value(),
-        ));
+        self.wire_c
+            .borrow_mut()
+            .set((self.f())(self.wire_a.borrow().get_value(), self.wire_b.borrow().get_value()));
     }
 
     pub fn garbled(&self) -> Vec<S> {
@@ -274,56 +268,38 @@ impl GateCount {
 // these are here to speed up tests
 impl GateCount {
     pub fn msm_montgomery() -> Self {
-        Self([
-            40952275, 39265860, 0, 0, 29750, 19632930, 0, 89650, 125020525, 89700, 210275,
-        ])
+        Self([40952275, 39265860, 0, 0, 29750, 19632930, 0, 89650, 125020525, 89700, 210275])
     }
 
     pub fn fq12_square_montgomery() -> Self {
-        Self([
-            3234570, 229616, 0, 0, 1640, 114808, 0, 111068, 9690504, 108020, 132452,
-        ])
+        Self([3234570, 229616, 0, 0, 1640, 114808, 0, 111068, 9690504, 108020, 132452])
     }
 
     pub fn fq12_cyclotomic_square_montgomery() -> Self {
-        Self([
-            1921672, 100076, 0, 0, 953, 50038, 0, 53251, 5790700, 53251, 62909,
-        ])
+        Self([1921672, 100076, 0, 0, 953, 50038, 0, 53251, 5790700, 53251, 62909])
     }
 
     pub fn fq12_mul_montgomery() -> Self {
-        Self([
-            4836448, 324104, 0, 0, 2420, 162052, 0, 155932, 14506687, 151360, 187163,
-        ])
+        Self([4836448, 324104, 0, 0, 2420, 162052, 0, 155932, 14506687, 151360, 187163])
     }
 
     pub fn fq12_inverse_montgomery() -> Self {
-        Self([
-            14828696, 3327400, 645668, 0, 327459, 1663700, 0, 477163, 39787000, 474370, 498290,
-        ])
+        Self([14828696, 3327400, 645668, 0, 327459, 1663700, 0, 477163, 39787000, 474370, 498290])
     }
 
     pub fn double_in_place_montgomery() -> Self {
-        Self([
-            2414471, 48260, 0, 0, 979, 24130, 0, 26095, 7548712, 26095, 35520,
-        ])
+        Self([2414471, 48260, 0, 0, 979, 24130, 0, 26095, 7548712, 26095, 35520])
     }
 
     pub fn add_in_place_montgomery() -> Self {
-        Self([
-            3828958, 58420, 0, 0, 1669, 29210, 0, 33275, 11650147, 33275, 48528,
-        ])
+        Self([3828958, 58420, 0, 0, 1669, 29210, 0, 33275, 11650147, 33275, 48528])
     }
 
     pub fn ell_montgomery() -> Self {
-        Self([
-            4486968, 107696, 0, 0, 2018, 53848, 0, 59246, 13625157, 59246, 78199,
-        ])
+        Self([4486968, 107696, 0, 0, 2018, 53848, 0, 59246, 13625157, 59246, 78199])
     }
 
     pub fn ell_by_constant_montgomery() -> Self {
-        Self([
-            4098864, 105664, 0, 0, 1374, 52832, 0, 58734, 13580727, 58734, 77179,
-        ])
+        Self([4098864, 105664, 0, 0, 1374, 52832, 0, 58734, 13580727, 58734, 77179])
     }
 }

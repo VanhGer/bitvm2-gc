@@ -145,8 +145,8 @@ mod tests {
     use ark_groth16::Groth16;
     use ark_relations::lc;
     use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
-    use ark_std::{
-        rand::{RngCore, SeedableRng},
+    use rand_chacha::{
+        rand_core::{RngCore, SeedableRng},
         test_rng,
     };
 
@@ -205,7 +205,7 @@ mod tests {
     #[test]
     fn test_groth16_verifier_evaluate_montgomery() {
         let k = 6;
-        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
+        let mut rng = rand_chacha::rand_core::rngs::StdRng::seed_from_u64(test_rng().next_u64());
         let circuit = DummyCircuit::<<ark_bn254::Bn254 as Pairing>::ScalarField> {
             a: Some(<ark_bn254::Bn254 as Pairing>::ScalarField::rand(&mut rng)),
             b: Some(<ark_bn254::Bn254 as Pairing>::ScalarField::rand(&mut rng)),

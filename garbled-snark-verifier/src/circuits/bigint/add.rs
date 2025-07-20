@@ -161,11 +161,7 @@ impl<const N_BITS: usize> BigIntImpl<N_BITS> {
         let mut select = Self::wires();
         select[0] = a[0].clone();
         for i in 1..N_BITS {
-            circuit.add(Gate::or(
-                select[i - 1].clone(),
-                a[i].clone(),
-                select[i].clone(),
-            ));
+            circuit.add(Gate::or(select[i - 1].clone(), a[i].clone(), select[i].clone()));
         }
 
         let mut k = Self::wires();
@@ -183,11 +179,8 @@ impl<const N_BITS: usize> BigIntImpl<N_BITS> {
         results.push(a);
         for i in 0..N_BITS {
             let half_result = circuit.extend(Self::half(results[i].clone()));
-            let result = circuit.extend(Self::select(
-                results[i].clone(),
-                half_result,
-                select[i].clone(),
-            ));
+            let result =
+                circuit.extend(Self::select(results[i].clone(), half_result, select[i].clone()));
             results.push(result);
         }
         circuit.add_wires(results[N_BITS].clone());
@@ -209,10 +202,7 @@ mod tests {
     fn test_add() {
         let a = random_biguint_n_bits(254);
         let b = random_biguint_n_bits(254);
-        let circuit = U254::add(
-            U254::wires_set_from_number(&a),
-            U254::wires_set_from_number(&b),
-        );
+        let circuit = U254::add(U254::wires_set_from_number(&a), U254::wires_set_from_number(&b));
         circuit.gate_counts().print();
         for mut gate in circuit.1 {
             gate.evaluate();

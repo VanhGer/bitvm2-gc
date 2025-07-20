@@ -26,12 +26,7 @@ pub fn self_or_zero_inv_generic(a: Wires, s: Wirex, len: usize) -> Circuit {
     let mut result = vec![];
     for i in 0..len {
         result.push(new_wirex());
-        circuit.add(Gate::and_variant(
-            a[i].clone(),
-            s.clone(),
-            result[i].clone(),
-            [0, 1, 0],
-        ));
+        circuit.add(Gate::and_variant(a[i].clone(), s.clone(), result[i].clone(), [0, 1, 0]));
     }
     circuit.add_wires(result);
     circuit
@@ -73,12 +68,7 @@ impl<const N_BITS: usize> BigIntImpl<N_BITS> {
                 circuit.add(Gate::xnor(a[0].clone(), a[1].clone(), res.clone()));
                 for x in &a[1..N_BITS] {
                     let new_res = new_wirex();
-                    circuit.add(Gate::and_variant(
-                        x.clone(),
-                        res,
-                        new_res.clone(),
-                        [1, 0, 0],
-                    ));
+                    circuit.add(Gate::and_variant(x.clone(), res, new_res.clone(), [1, 0, 0]));
                     res = new_res;
                 }
                 circuit.add_wire(res);
@@ -215,10 +205,7 @@ mod tests {
     fn test_equal_and_equal_constant() {
         let a = random_biguint_n_bits(254);
         let b = random_biguint_n_bits(254);
-        let circuit = U254::equal(
-            U254::wires_set_from_number(&a),
-            U254::wires_set_from_number(&b),
-        );
+        let circuit = U254::equal(U254::wires_set_from_number(&a), U254::wires_set_from_number(&b));
         circuit.gate_counts().print();
         for mut gate in circuit.1 {
             gate.evaluate();
@@ -226,10 +213,7 @@ mod tests {
         assert_eq!(a == b, circuit.0[0].borrow().get_value());
 
         let a = random_biguint_n_bits(254);
-        let circuit = U254::equal(
-            U254::wires_set_from_number(&a),
-            U254::wires_set_from_number(&a),
-        );
+        let circuit = U254::equal(U254::wires_set_from_number(&a), U254::wires_set_from_number(&a));
         circuit.gate_counts().print();
         for mut gate in circuit.1 {
             gate.evaluate();
@@ -249,10 +233,8 @@ mod tests {
     fn test_greater_than() {
         let a = random_biguint_n_bits(254);
         let b = random_biguint_n_bits(254);
-        let circuit = U254::greater_than(
-            U254::wires_set_from_number(&a),
-            U254::wires_set_from_number(&b),
-        );
+        let circuit =
+            U254::greater_than(U254::wires_set_from_number(&a), U254::wires_set_from_number(&b));
         circuit.gate_counts().print();
         for mut gate in circuit.1 {
             gate.evaluate();
@@ -260,10 +242,8 @@ mod tests {
         assert_eq!(a > b, circuit.0[0].borrow().get_value());
 
         let a = random_biguint_n_bits(254);
-        let circuit = U254::greater_than(
-            U254::wires_set_from_number(&a),
-            U254::wires_set_from_number(&a),
-        );
+        let circuit =
+            U254::greater_than(U254::wires_set_from_number(&a), U254::wires_set_from_number(&a));
         circuit.gate_counts().print();
         for mut gate in circuit.1 {
             gate.evaluate();
@@ -300,11 +280,8 @@ mod tests {
         let b = random_biguint_n_bits(254);
         let s = new_wirex();
         s.borrow_mut().set(true);
-        let circuit = U254::select(
-            U254::wires_set_from_number(&a),
-            U254::wires_set_from_number(&b),
-            s,
-        );
+        let circuit =
+            U254::select(U254::wires_set_from_number(&a), U254::wires_set_from_number(&b), s);
         circuit.gate_counts().print();
         for mut gate in circuit.1 {
             gate.evaluate();

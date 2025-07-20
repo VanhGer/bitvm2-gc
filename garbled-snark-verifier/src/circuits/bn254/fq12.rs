@@ -1,13 +1,11 @@
 use crate::{
     bag::*,
-    circuits::bn254::{fp254impl::Fp254Impl, fq::Fq, fq2::Fq2, fq6::Fq6},
+    circuits::bn254::{fp254impl::Fp254Impl, fq::Fq, fq2::Fq2, fq6::Fq6, utils::SEED_U64},
 };
 use ark_ff::{Field, Fp12Config, UniformRand};
-//use ark_std::rand::SeedableRng;
-use rand_chacha::rand_core::SeedableRng;
-use rand::{Rng, rng};
+use core::iter::zip;
 use rand_chacha::ChaCha20Rng;
-use std::iter::zip;
+use rand_chacha::rand_core::SeedableRng;
 
 pub struct Fq12;
 
@@ -23,7 +21,7 @@ impl Fq12 {
     }
 
     pub fn random() -> ark_bn254::Fq12 {
-        let mut prng = ChaCha20Rng::seed_from_u64(rng().random());
+        let mut prng = ChaCha20Rng::seed_from_u64(SEED_U64);
         ark_bn254::Fq12::rand(&mut prng)
     }
 
@@ -224,10 +222,7 @@ impl Fq12 {
         let wires_4 = circuit.extend(Fq6::add(wires_2.clone(), wires_3.clone()));
         let wires_5 = circuit.extend(Fq6::mul_by_nonresidue(wires_3.clone()));
         let wires_6 = circuit.extend(Fq6::add(wires_5.clone(), wires_2.clone()));
-        let wires_7 = circuit.extend(Fq6::mul_by_constant_montgomery(
-            wires_1.clone(),
-            b.c0 + b.c1,
-        ));
+        let wires_7 = circuit.extend(Fq6::mul_by_constant_montgomery(wires_1.clone(), b.c0 + b.c1));
         let wires_8 = circuit.extend(Fq6::sub(wires_7.clone(), wires_4.clone()));
         circuit.add_wires(wires_6);
         circuit.add_wires(wires_8);
@@ -243,23 +238,15 @@ impl Fq12 {
         let a_c0 = a[0..Fq6::N_BITS].to_vec();
         let a_c1 = a[Fq6::N_BITS..2 * Fq6::N_BITS].to_vec();
 
-        let wires_1 = circuit.extend(Fq6::mul_by_01_montgomery(
-            a_c1.clone(),
-            c3.clone(),
-            c4.clone(),
-        ));
+        let wires_1 =
+            circuit.extend(Fq6::mul_by_01_montgomery(a_c1.clone(), c3.clone(), c4.clone()));
         let wires_2 = circuit.extend(Fq6::mul_by_nonresidue(wires_1.clone()));
         let c0 = circuit.extend(Fq6::add(wires_2.clone(), a_c0.clone()));
         let wires_3 = circuit.extend(Fq6::add(a_c0.clone(), a_c1.clone()));
-        let wires_4 = circuit.extend(Fq2::add_constant(
-            c3.clone(),
-            Fq2::as_montgomery(ark_bn254::Fq2::ONE),
-        ));
-        let wires_5 = circuit.extend(Fq6::mul_by_01_montgomery(
-            wires_3.clone(),
-            wires_4.clone(),
-            c4.clone(),
-        ));
+        let wires_4 =
+            circuit.extend(Fq2::add_constant(c3.clone(), Fq2::as_montgomery(ark_bn254::Fq2::ONE)));
+        let wires_5 =
+            circuit.extend(Fq6::mul_by_01_montgomery(wires_3.clone(), wires_4.clone(), c4.clone()));
         let wires_6 = circuit.extend(Fq6::add(wires_1, a_c0));
         let c1 = circuit.extend(Fq6::sub(wires_5, wires_6));
         circuit.add_wires(c0);
@@ -277,21 +264,15 @@ impl Fq12 {
         let a_c0 = a[0..Fq6::N_BITS].to_vec();
         let a_c1 = a[Fq6::N_BITS..2 * Fq6::N_BITS].to_vec();
 
-        let wires_1 = circuit.extend(Fq6::mul_by_01_montgomery(
-            a_c1.clone(),
-            c3.clone(),
-            c4.clone(),
-        ));
+        let wires_1 =
+            circuit.extend(Fq6::mul_by_01_montgomery(a_c1.clone(), c3.clone(), c4.clone()));
         let wires_2 = circuit.extend(Fq6::mul_by_nonresidue(wires_1.clone()));
         let wires_3 = circuit.extend(Fq6::mul_by_fq2_montgomery(a_c0.clone(), c0.clone()));
         let new_c0 = circuit.extend(Fq6::add(wires_2.clone(), wires_3.clone()));
         let wires_4 = circuit.extend(Fq6::add(a_c0.clone(), a_c1.clone()));
         let wires_5 = circuit.extend(Fq2::add(c3.clone(), c0.clone()));
-        let wires_6 = circuit.extend(Fq6::mul_by_01_montgomery(
-            wires_4.clone(),
-            wires_5.clone(),
-            c4.clone(),
-        ));
+        let wires_6 =
+            circuit.extend(Fq6::mul_by_01_montgomery(wires_4.clone(), wires_5.clone(), c4.clone()));
         let wires_7 = circuit.extend(Fq6::add(wires_1, wires_3));
         let new_c1 = circuit.extend(Fq6::sub(wires_6, wires_7));
 
@@ -314,11 +295,8 @@ impl Fq12 {
         let a_c0 = a[0..Fq6::N_BITS].to_vec();
         let a_c1 = a[Fq6::N_BITS..2 * Fq6::N_BITS].to_vec();
 
-        let wires_1 = circuit.extend(Fq6::mul_by_01_constant1_montgomery(
-            a_c1.clone(),
-            c3.clone(),
-            c4,
-        ));
+        let wires_1 =
+            circuit.extend(Fq6::mul_by_01_constant1_montgomery(a_c1.clone(), c3.clone(), c4));
         let wires_2 = circuit.extend(Fq6::mul_by_nonresidue(wires_1.clone()));
         let wires_3 = circuit.extend(Fq6::mul_by_fq2_montgomery(a_c0.clone(), c0.clone()));
         let new_c0 = circuit.extend(Fq6::add(wires_2.clone(), wires_3.clone()));

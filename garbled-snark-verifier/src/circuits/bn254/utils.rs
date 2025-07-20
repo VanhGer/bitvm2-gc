@@ -1,5 +1,10 @@
 use num_bigint::{BigInt, BigUint, ToBigInt};
 use num_traits::{One, Zero};
+use rand_chacha::ChaCha20Rng;
+use rand_chacha::rand_core::{RngCore, SeedableRng};
+
+pub const SEED_32_BYTES: [u8; 32] = [17u8; 32];
+pub const SEED_U64: u64 = 17;
 
 fn extended_gcd(a: &BigInt, b: &BigInt) -> (BigInt, BigInt, BigInt) {
     let (mut x, mut y) = (BigInt::one(), BigInt::zero());
@@ -46,10 +51,7 @@ pub mod tests {
         let r = T::montgomery_r_as_biguint();
         let (r_inv, n_p) = calculate_montgomery_constants(modulus.clone(), r.clone());
 
-        assert_eq!(
-            (r.clone() * r_inv.clone()) % modulus.clone(),
-            BigUint::one()
-        );
+        assert_eq!((r.clone() * r_inv.clone()) % modulus.clone(), BigUint::one());
         assert_eq!((n_p.clone() * modulus.clone()) % r.clone(), BigUint::one());
 
         println!("modulus inverse: {}\nr_inverse: {}", n_p, r_inv);
@@ -67,4 +69,11 @@ pub mod tests {
     fn test_montgomery_constants_fr() {
         test_montgomery_constants::<Fr>();
     }
+}
+
+pub fn random_bytes<const N: usize>() -> [u8; N] {
+    let mut rng = ChaCha20Rng::from_seed([0u8; 32]); // 可换为其他 seed
+    let mut buf = [0u8; N];
+    rng.fill_bytes(&mut buf);
+    buf
 }

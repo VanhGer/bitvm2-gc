@@ -1,13 +1,14 @@
 use crate::{
     bag::*,
-    circuits::bigint::U254,
-    circuits::bn254::{fp254impl::Fp254Impl, fq::Fq},
+    circuits::{
+        bigint::U254,
+        bn254::{fp254impl::Fp254Impl, fq::Fq, utils::SEED_U64},
+    },
 };
 use ark_ff::{Field, Fp2Config, UniformRand};
-use rand_chacha::rand_core::SeedableRng;
 use num_traits::Zero;
-use rand::{Rng, rng};
 use rand_chacha::ChaCha20Rng;
+use rand_chacha::rand_core::SeedableRng;
 
 pub struct Fq2;
 
@@ -23,7 +24,7 @@ impl Fq2 {
     }
 
     pub fn random() -> ark_bn254::Fq2 {
-        let mut prng = ChaCha20Rng::seed_from_u64(rng().random());
+        let mut prng = ChaCha20Rng::seed_from_u64(SEED_U64);
         ark_bn254::Fq2::rand(&mut prng)
     }
 
@@ -654,10 +655,7 @@ mod tests {
             gate.evaluate();
         }
         let c = Fq2::from_wires(circuit.0);
-        assert_eq!(
-            c,
-            Fq2::as_montgomery(a * ark_bn254::Fq2::new(b, ark_bn254::Fq::ZERO))
-        );
+        assert_eq!(c, Fq2::as_montgomery(a * ark_bn254::Fq2::new(b, ark_bn254::Fq::ZERO)));
     }
 
     #[test]
@@ -671,10 +669,7 @@ mod tests {
             gate.evaluate();
         }
         let c = Fq2::from_wires(circuit.0);
-        assert_eq!(
-            c,
-            Fq2::as_montgomery(a * ark_bn254::Fq2::new(b, ark_bn254::Fq::ZERO))
-        );
+        assert_eq!(c, Fq2::as_montgomery(a * ark_bn254::Fq2::new(b, ark_bn254::Fq::ZERO)));
     }
 
     #[test]
@@ -751,10 +746,8 @@ mod tests {
         let r = Fq2::random();
         let expected_norm = ark_bn254::Fq::from(r.norm());
 
-        let circuit = Fq2::norm_montgomery(
-            Fq::wires_set_montgomery(r.c0),
-            Fq::wires_set_montgomery(r.c1),
-        );
+        let circuit =
+            Fq2::norm_montgomery(Fq::wires_set_montgomery(r.c0), Fq::wires_set_montgomery(r.c1));
         circuit.gate_counts().print();
         for mut gate in circuit.1 {
             gate.evaluate();

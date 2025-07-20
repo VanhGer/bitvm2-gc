@@ -2,14 +2,13 @@ use crate::{
     bag::*,
     circuits::{
         basic::multiplexer,
-        bn254::{fp254impl::Fp254Impl, fq::Fq, fr::Fr},
+        bn254::{fp254impl::Fp254Impl, fq::Fq, fr::Fr, utils::SEED_U64},
     },
 };
 use ark_ff::{AdditiveGroup, UniformRand};
-use rand_chacha::rand_core::SeedableRng;
-use rand::{Rng, rng};
+use core::{cmp::min, iter::zip};
 use rand_chacha::ChaCha20Rng;
-use std::{cmp::min, iter::zip};
+use rand_chacha::rand_core::SeedableRng;
 
 pub struct G1Projective;
 
@@ -33,7 +32,7 @@ impl G1Projective {
     }
 
     pub fn random() -> ark_bn254::G1Projective {
-        let mut prng = ChaCha20Rng::seed_from_u64(rng().random());
+        let mut prng = ChaCha20Rng::seed_from_u64(SEED_U64);
         ark_bn254::G1Projective::rand(&mut prng)
     }
 
@@ -141,21 +140,9 @@ impl G1Projective {
         let z2_0 = circuit.extend(Fq::equal_zero(z2.clone()))[0].clone();
         let zero = Fq::wires_set(ark_bn254::Fq::ZERO);
         let s = vec![z1_0, z2_0];
-        let x = circuit.extend(Fq::multiplexer(
-            vec![x3, x2, x1, zero.clone()],
-            s.clone(),
-            2,
-        ));
-        let y = circuit.extend(Fq::multiplexer(
-            vec![y3, y2, y1, zero.clone()],
-            s.clone(),
-            2,
-        ));
-        let z = circuit.extend(Fq::multiplexer(
-            vec![z3, z2, z1, zero.clone()],
-            s.clone(),
-            2,
-        ));
+        let x = circuit.extend(Fq::multiplexer(vec![x3, x2, x1, zero.clone()], s.clone(), 2));
+        let y = circuit.extend(Fq::multiplexer(vec![y3, y2, y1, zero.clone()], s.clone(), 2));
+        let z = circuit.extend(Fq::multiplexer(vec![z3, z2, z1, zero.clone()], s.clone(), 2));
 
         circuit.add_wires(x);
         circuit.add_wires(y);
@@ -254,10 +241,8 @@ impl G1Projective {
             p += base;
         }
 
-        let mut bases_wires = bases
-            .iter()
-            .map(|p| G1Projective::wires_set_montgomery(*p))
-            .collect::<Vec<Wires>>();
+        let mut bases_wires =
+            bases.iter().map(|p| G1Projective::wires_set_montgomery(*p)).collect::<Vec<Wires>>();
 
         let mut to_be_added = Vec::new();
 
@@ -342,7 +327,7 @@ impl G1Affine {
     }
 
     pub fn random() -> ark_bn254::G1Affine {
-        let mut prng = ChaCha20Rng::seed_from_u64(rng().random());
+        let mut prng = ChaCha20Rng::seed_from_u64(SEED_U64);
         ark_bn254::G1Affine::rand(&mut prng)
     }
 

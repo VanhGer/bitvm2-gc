@@ -19,37 +19,19 @@ impl Wire {
     pub fn new() -> Self {
         let label0 = S::random();
         let label1 = S::random();
-        Self {
-            label0: Some(label0),
-            label1: Some(label1),
-            value: None,
-            label: None,
-        }
+        Self { label0: Some(label0), label1: Some(label1), value: None, label: None }
     }
     #[cfg(not(feature = "garbled"))]
     pub fn new() -> Self {
-        Self {
-            label0: None,
-            label1: None,
-            value: None,
-            label: None,
-        }
+        Self { label0: None, label1: None, value: None, label: None }
     }
 
     pub fn select(&self, selector: bool) -> S {
-        if selector {
-            self.label1.unwrap()
-        } else {
-            self.label0.unwrap()
-        }
+        if selector { self.label1.unwrap() } else { self.label0.unwrap() }
     }
 
     pub fn select_hash(&self, selector: bool) -> S {
-        if selector {
-            self.label1.unwrap().hash()
-        } else {
-            self.label0.unwrap().hash()
-        }
+        if selector { self.label1.unwrap().hash() } else { self.label0.unwrap().hash() }
     }
 
     pub fn get_value(&self) -> bool {

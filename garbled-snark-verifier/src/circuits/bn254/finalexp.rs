@@ -65,10 +65,7 @@ pub fn cyclotomic_exp_fastinv(f: ark_bn254::Fq12) -> ark_bn254::Fq12 {
     let self_inverse = f.cyclotomic_inverse().unwrap();
     let mut res = ark_bn254::Fq12::ONE;
     let mut found_nonzero = false;
-    for value in ark_ff::biginteger::arithmetic::find_naf(ark_bn254::Config::X)
-        .into_iter()
-        .rev()
-    {
+    for value in ark_ff::biginteger::arithmetic::find_naf(ark_bn254::Config::X).into_iter().rev() {
         if found_nonzero {
             res.square_in_place(); // cyclotomic_square_in_place
         }
@@ -95,10 +92,7 @@ pub fn cyclotomic_exp_fast_inverse_evaluate_montgomery_fast(f: Wires) -> (Wires,
     ); //Fq12::inverse(res.clone());
     gate_count += gc;
     let mut found_nonzero = false;
-    for value in ark_ff::biginteger::arithmetic::find_naf(ark_bn254::Config::X)
-        .into_iter()
-        .rev()
-    {
+    for value in ark_ff::biginteger::arithmetic::find_naf(ark_bn254::Config::X).into_iter().rev() {
         if found_nonzero {
             let (wires1, gc) = (
                 Fq12::wires_set_montgomery(Fq12::from_montgomery_wires(res.clone()).square()),
@@ -318,9 +312,9 @@ mod tests {
         pairing::{MillerLoopOutput, Pairing},
     };
     use ark_ff::{CyclotomicMultSubgroup, Field, UniformRand};
-    use ark_std::rand::SeedableRng;
     use num_bigint::BigUint;
     use rand_chacha::ChaCha20Rng;
+    use rand_chacha::rand_core::SeedableRng;
     use std::str::FromStr;
 
     #[test]
@@ -372,9 +366,7 @@ mod tests {
         let mut prng = ChaCha20Rng::seed_from_u64(0);
         let f = ark_bn254::Fq12::rand(&mut prng);
 
-        let c = ark_bn254::Bn254::final_exponentiation(MillerLoopOutput(f))
-            .unwrap()
-            .0;
+        let c = ark_bn254::Bn254::final_exponentiation(MillerLoopOutput(f)).unwrap().0;
         let d = final_exponentiation(f);
         assert_eq!(c, d);
     }
@@ -384,9 +376,7 @@ mod tests {
         let mut prng = ChaCha20Rng::seed_from_u64(0);
         let f = ark_bn254::Fq12::rand(&mut prng);
 
-        let c = ark_bn254::Bn254::final_exponentiation(MillerLoopOutput(f))
-            .unwrap()
-            .0;
+        let c = ark_bn254::Bn254::final_exponentiation(MillerLoopOutput(f)).unwrap().0;
         let (d, gate_count) =
             final_exponentiation_evaluate_montgomery_fast(Fq12::wires_set_montgomery(f));
         gate_count.print();

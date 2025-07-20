@@ -1,9 +1,9 @@
+use crate::circuits::bn254::utils::SEED_U64;
 use crate::{bag::*, circuits::bn254::fq2::Fq2};
 use ark_ff::{Fp6Config, UniformRand, fields::AdditiveGroup};
 //use ark_std::rand::SeedableRng;
-use rand_chacha::rand_core::SeedableRng;
-use rand::{Rng, rng};
 use rand_chacha::ChaCha20Rng;
+use rand_chacha::rand_core::SeedableRng;
 
 pub struct Fq6;
 
@@ -27,7 +27,7 @@ impl Fq6 {
     }
 
     pub fn random() -> ark_bn254::Fq6 {
-        let mut prng = ChaCha20Rng::seed_from_u64(rng().random());
+        let mut prng = ChaCha20Rng::seed_from_u64(SEED_U64);
         ark_bn254::Fq6::rand(&mut prng)
     }
 
@@ -265,14 +265,10 @@ impl Fq6 {
         let wires_8: Wires = circuit.extend(Fq2::add(a_c0.clone(), wires_5.clone()));
         let wires_9: Wires = circuit.extend(Fq2::add(wires_8.clone(), wires_7.clone()));
 
-        let v1 = circuit.extend(Fq2::mul_by_constant_montgomery(
-            wires_3.clone(),
-            b.c0 + b.c1 + b.c2,
-        ));
-        let v2 = circuit.extend(Fq2::mul_by_constant_montgomery(
-            wires_4.clone(),
-            b.c0 - b.c1 + b.c2,
-        ));
+        let v1 =
+            circuit.extend(Fq2::mul_by_constant_montgomery(wires_3.clone(), b.c0 + b.c1 + b.c2));
+        let v2 =
+            circuit.extend(Fq2::mul_by_constant_montgomery(wires_4.clone(), b.c0 - b.c1 + b.c2));
         let v3 = circuit.extend(Fq2::mul_by_constant_montgomery(
             wires_9.clone(),
             b.c0 + b.c1.double() + b.c2.double().double(),
@@ -491,10 +487,8 @@ impl Fq6 {
         let c_square_beta_minus_ab = circuit.extend(Fq2::sub(c_square_beta, ab));
         let b_square_minus_ac = circuit.extend(Fq2::sub(b_square, ac));
 
-        let wires_1 = circuit.extend(Fq2::mul_montgomery(
-            c_square_beta_minus_ab.clone(),
-            c.clone(),
-        ));
+        let wires_1 =
+            circuit.extend(Fq2::mul_montgomery(c_square_beta_minus_ab.clone(), c.clone()));
 
         let wires_2 = circuit.extend(Fq2::mul_montgomery(b_square_minus_ac.clone(), b));
 
@@ -505,14 +499,10 @@ impl Fq6 {
         let norm = circuit.extend(Fq2::add(wires_4, wires_3));
 
         let inverse_norm = circuit.extend(Fq2::inverse_montgomery(norm));
-        let res_c0 = circuit.extend(Fq2::mul_montgomery(
-            a_square_minus_bc_beta,
-            inverse_norm.clone(),
-        ));
-        let res_c1 = circuit.extend(Fq2::mul_montgomery(
-            c_square_beta_minus_ab,
-            inverse_norm.clone(),
-        ));
+        let res_c0 =
+            circuit.extend(Fq2::mul_montgomery(a_square_minus_bc_beta, inverse_norm.clone()));
+        let res_c1 =
+            circuit.extend(Fq2::mul_montgomery(c_square_beta_minus_ab, inverse_norm.clone()));
         let res_c2 = circuit.extend(Fq2::mul_montgomery(b_square_minus_ac, inverse_norm.clone()));
 
         circuit.add_wires(res_c0);

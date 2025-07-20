@@ -15,7 +15,7 @@ use crate::{
 use ark_ec::{bn::BnConfig, short_weierstrass::SWCurveConfig};
 use ark_ff::{AdditiveGroup, Field};
 
-use std::iter::zip;
+use core::iter::zip;
 
 pub fn double_in_place(
     r: &mut ark_bn254::G2Projective,
@@ -45,10 +45,7 @@ pub fn double_in_place(
 
 pub fn double_in_place2(
     r: ark_bn254::G2Projective,
-) -> (
-    ark_bn254::G2Projective,
-    (ark_bn254::Fq2, ark_bn254::Fq2, ark_bn254::Fq2),
-) {
+) -> (ark_bn254::G2Projective, (ark_bn254::Fq2, ark_bn254::Fq2, ark_bn254::Fq2)) {
     let half = ark_bn254::Fq::from(Fq::half_modulus());
     let mut a = r.x * r.y;
     a.mul_assign_by_fp(&half);
@@ -143,11 +140,8 @@ pub fn add_in_place(
     let h = e + f - g.double();
     let j = theta * q.x - (lambda * q.y);
 
-    let new_r = ark_bn254::G2Projective {
-        x: lambda * h,
-        y: theta * (g - h) - (e * r.y),
-        z: r.z * e,
-    };
+    let new_r =
+        ark_bn254::G2Projective { x: lambda * h, y: theta * (g - h) - (e * r.y), z: r.z * e };
     *r = new_r;
 
     (lambda, -theta, j)
@@ -156,10 +150,7 @@ pub fn add_in_place(
 pub fn add_in_place2(
     r: ark_bn254::G2Projective,
     q: &ark_bn254::G2Affine,
-) -> (
-    ark_bn254::G2Projective,
-    (ark_bn254::Fq2, ark_bn254::Fq2, ark_bn254::Fq2),
-) {
+) -> (ark_bn254::G2Projective, (ark_bn254::Fq2, ark_bn254::Fq2, ark_bn254::Fq2)) {
     let theta = r.y - (q.y * r.z);
     let lambda = r.x - (q.x * r.z);
     let c = theta.square();
@@ -170,11 +161,8 @@ pub fn add_in_place2(
     let h = e + f - g.double();
     let j = theta * q.x - (lambda * q.y);
 
-    let new_r = ark_bn254::G2Projective {
-        x: lambda * h,
-        y: theta * (g - h) - (e * r.y),
-        z: r.z * e,
-    };
+    let new_r =
+        ark_bn254::G2Projective { x: lambda * h, y: theta * (g - h) - (e * r.y), z: r.z * e };
 
     (new_r, (lambda, -theta, j))
 }
@@ -302,11 +290,7 @@ pub fn g2_affine_neg_evaluate(r: Wires) -> (Wires, GateCount) {
 
 pub fn ell_coeffs(q: ark_bn254::G2Affine) -> Vec<(ark_bn254::Fq2, ark_bn254::Fq2, ark_bn254::Fq2)> {
     let mut ellc = Vec::new();
-    let mut r = ark_bn254::G2Projective {
-        x: q.x,
-        y: q.y,
-        z: ark_bn254::Fq2::ONE,
-    };
+    let mut r = ark_bn254::G2Projective { x: q.x, y: q.y, z: ark_bn254::Fq2::ONE };
     let neg_q = -q;
     for bit in ark_bn254::Config::ATE_LOOP_COUNT.iter().rev().skip(1) {
         ellc.push(double_in_place(&mut r));
@@ -946,11 +930,8 @@ pub fn deserialize_compressed_g2_circuit_evaluate(p_c: Wires, y_flag: Wirex) -> 
     );
     gc += add_gc;
 
-    let (final_y_1, add_gc) = U254::select_evaluate(
-        y[Fq::N_BITS..].to_vec(),
-        neg_y[Fq::N_BITS..].to_vec(),
-        y_flag,
-    );
+    let (final_y_1, add_gc) =
+        U254::select_evaluate(y[Fq::N_BITS..].to_vec(), neg_y[Fq::N_BITS..].to_vec(), y_flag);
     gc += add_gc;
 
     /*
@@ -1169,8 +1150,8 @@ mod tests {
     use super::*;
     use ark_ec::pairing::Pairing;
     use ark_ff::UniformRand;
-    use ark_std::rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
+    use rand_chacha::rand_core::SeedableRng;
     use serial_test::serial;
     use std::iter::zip;
 
@@ -1401,12 +1382,8 @@ mod tests {
     fn test_multi_miller_loop() {
         let mut prng = ChaCha20Rng::seed_from_u64(0);
         let n = 3;
-        let ps = (0..n)
-            .map(|_| ark_bn254::G1Affine::rand(&mut prng))
-            .collect::<Vec<_>>();
-        let qs = (0..n)
-            .map(|_| ark_bn254::G2Affine::rand(&mut prng))
-            .collect::<Vec<_>>();
+        let ps = (0..n).map(|_| ark_bn254::G1Affine::rand(&mut prng)).collect::<Vec<_>>();
+        let qs = (0..n).map(|_| ark_bn254::G2Affine::rand(&mut prng)).collect::<Vec<_>>();
 
         let c = ark_bn254::Bn254::multi_miller_loop(ps.clone(), qs.clone()).0;
         let d = multi_miller_loop(ps, qs);
@@ -1417,21 +1394,13 @@ mod tests {
     fn test_multi_miller_loop_evaluate_montgomery_fast() {
         let mut prng = ChaCha20Rng::seed_from_u64(0);
         let n = 3;
-        let ps = (0..n)
-            .map(|_| ark_bn254::G1Affine::rand(&mut prng))
-            .collect::<Vec<_>>();
-        let qs = (0..n)
-            .map(|_| ark_bn254::G2Affine::rand(&mut prng))
-            .collect::<Vec<_>>();
+        let ps = (0..n).map(|_| ark_bn254::G1Affine::rand(&mut prng)).collect::<Vec<_>>();
+        let qs = (0..n).map(|_| ark_bn254::G2Affine::rand(&mut prng)).collect::<Vec<_>>();
 
         let expected_f = multi_miller_loop(ps.clone(), qs.clone());
         let (f, gate_count) = multi_miller_loop_evaluate_montgomery_fast(
-            ps.iter()
-                .map(|p| G1Affine::wires_set_montgomery(*p))
-                .collect(),
-            qs.iter()
-                .map(|q| G2Affine::wires_set_montgomery(*q))
-                .collect(),
+            ps.iter().map(|p| G1Affine::wires_set_montgomery(*p)).collect(),
+            qs.iter().map(|q| G2Affine::wires_set_montgomery(*q)).collect(),
         );
         gate_count.print();
 

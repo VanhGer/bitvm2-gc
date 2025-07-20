@@ -47,11 +47,8 @@ pub fn mul_generic(a_wires: &Wires, b_wires: &Wires, len: usize) -> Circuit {
         for j in i..(i + len) {
             addition_wires_0.push(circuit.0[j].clone());
         }
-        let addition_wires_1 = circuit.extend(self_or_zero_generic(
-            a_wires.clone(),
-            current_bit.clone(),
-            len,
-        ));
+        let addition_wires_1 =
+            circuit.extend(self_or_zero_generic(a_wires.clone(), current_bit.clone(), len));
         let new_bits = circuit.extend(add_generic(addition_wires_0, addition_wires_1, len));
         circuit.0[i..(i + len + 1)].clone_from_slice(&new_bits);
     }
@@ -261,10 +258,8 @@ mod tests {
         for _ in 0..10 {
             let a = random_biguint_n_bits(254);
             let b = random_biguint_n_bits(254);
-            let circuit = U254::mul(
-                U254::wires_set_from_number(&a),
-                U254::wires_set_from_number(&b),
-            );
+            let circuit =
+                U254::mul(U254::wires_set_from_number(&a), U254::wires_set_from_number(&b));
             let c = &a * &b;
             circuit.gate_counts().print();
 
@@ -273,11 +268,7 @@ mod tests {
             }
 
             let result = biguint_from_bits(
-                circuit
-                    .0
-                    .iter()
-                    .map(|output_wire| output_wire.borrow().get_value())
-                    .collect(),
+                circuit.0.iter().map(|output_wire| output_wire.borrow().get_value()).collect(),
             );
             assert_eq!(result, c);
         }
@@ -300,11 +291,7 @@ mod tests {
             }
 
             let result = biguint_from_bits(
-                circuit
-                    .0
-                    .iter()
-                    .map(|output_wire| output_wire.borrow().get_value())
-                    .collect(),
+                circuit.0.iter().map(|output_wire| output_wire.borrow().get_value()).collect(),
             );
             assert_eq!(result, c);
         }
@@ -328,11 +315,7 @@ mod tests {
             }
 
             let result = biguint_from_bits(
-                circuit
-                    .0
-                    .iter()
-                    .map(|output_wire| output_wire.borrow().get_value())
-                    .collect(),
+                circuit.0.iter().map(|output_wire| output_wire.borrow().get_value()).collect(),
             );
             assert_eq!(result, c);
         }
@@ -352,11 +335,7 @@ mod tests {
             }
 
             let result = biguint_from_bits(
-                circuit
-                    .0
-                    .iter()
-                    .map(|output_wire| output_wire.borrow().get_value())
-                    .collect(),
+                circuit.0.iter().map(|output_wire| output_wire.borrow().get_value()).collect(),
             );
             assert_eq!(result, c);
         }
@@ -381,11 +360,7 @@ mod tests {
             }
 
             let result = biguint_from_bits(
-                circuit
-                    .0
-                    .iter()
-                    .map(|output_wire| output_wire.borrow().get_value())
-                    .collect(),
+                circuit.0.iter().map(|output_wire| output_wire.borrow().get_value()).collect(),
             );
             assert_eq!(result, c);
         }
