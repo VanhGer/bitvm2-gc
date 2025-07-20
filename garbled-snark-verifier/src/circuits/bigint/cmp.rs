@@ -192,14 +192,14 @@ impl<const N_BITS: usize> BigIntImpl<N_BITS> {
 
 #[cfg(test)]
 mod tests {
-    use rand::{Rng, rng};
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha20Rng;
     use std::str::FromStr;
 
     use super::*;
-    use crate::circuits::bigint::{
-        U254,
-        utils::{biguint_from_wires, random_biguint_n_bits},
-    };
+    use crate::circuits::{bigint::{
+        utils::{biguint_from_wires, random_biguint_n_bits}, U254
+    }, bn254::utils::create_rng};
 
     #[test]
     fn test_equal_and_equal_constant() {
@@ -321,6 +321,7 @@ mod tests {
         let a: Vec<BigUint> = (0..n).map(|_| random_biguint_n_bits(254)).collect();
         let s: Wires = (0..w).map(|_| new_wirex()).collect();
 
+        let mut rng = create_rng(); 
         let mut a_wires = Vec::new();
         for e in a.iter() {
             a_wires.push(U254::wires_set_from_number(e));
@@ -328,7 +329,7 @@ mod tests {
 
         let mut u = 0;
         for wire in s.iter().rev() {
-            let x = rng().random();
+            let x = rng.r#gen();
             u = u + u + if x { 1 } else { 0 };
             wire.borrow_mut().set(x);
         }
