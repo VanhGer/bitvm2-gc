@@ -1,0 +1,20 @@
+[package]
+name = "verifiable-circuit-host"
+version = "0.0.1" 
+edition = "2024" 
+default-run = "verifiable-circuit-host"
+publish = false
+
+[dependencies]
+hex = "0.4.3"
+zkm-sdk = { workspace = true }
+
+[build-dependencies]
+zkm-build = { workspace = true } 
+
+[[bin]]
+name = "verifiable-circuit-host"
+path = "src/main.rs"
+
+# [features]
+# cuda = ["zkm-sdk/cuda"]

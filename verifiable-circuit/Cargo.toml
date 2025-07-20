@@ -1,0 +1,9 @@
+[package]
+name = "verifiable-circuit"
+version = "1.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+zkm-zkvm = { workspace = true }
+garbled-snark-verifier = { workspace = true, features = ["garbled"] } 
