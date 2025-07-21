@@ -21,6 +21,7 @@ impl Wire {
         let label1 = S::random();
         Self { label0: Some(label0), label1: Some(label1), value: None, label: None }
     }
+
     #[cfg(not(feature = "garbled"))]
     pub fn new() -> Self {
         Self { label0: None, label1: None, value: None, label: None }
