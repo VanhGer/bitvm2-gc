@@ -7,27 +7,11 @@
 // inside the zkVM.
 #![no_std]
 #![no_main]
+extern crate alloc;
+
 zkm_zkvm::entrypoint!(main);
-
-use garbled_snark_verifier::circuits::bigint::{
-    utils::{biguint_from_wires, random_biguint_n_bits},
-    U254,
-};
-
-//#[cfg(feature = "garbled")]
+use garbled_snark_verifier::core::utils::check_guest;
 fn main() {
-    let a = random_biguint_n_bits(254);
-    let mut circuit = U254::odd_part(U254::wires_set_from_number(&a));
-    circuit.gate_counts().print();
-
-    for gate in &mut circuit.1 {
-        gate.evaluate();
-    }
-    let c = biguint_from_wires(circuit.0[0..U254::N_BITS].to_vec());
-    let d = biguint_from_wires(circuit.0[U254::N_BITS..2 * U254::N_BITS].to_vec());
-    assert_eq!(a, c * d);
-
-    let garbled = circuit.garbled_gates();
-    //println!("garbled gate size: {}", garbled.len());
-    zkm_zkvm::io::commit(&garbled.len());
+    let mut buf = zkm_zkvm::io::read_vec();
+    check_guest(&buf);
 }

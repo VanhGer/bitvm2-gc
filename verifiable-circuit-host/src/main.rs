@@ -1,39 +1,80 @@
-use zkm_sdk::{ProverClient, ZKMProofWithPublicValues, ZKMStdin, include_elf, utils};
+use std::io::Read;
+
+use garbled_snark_verifier::{
+    bag::{Circuit, new_wirex},
+    circuits::{
+        basic::half_adder,
+        bn254::{fp254impl::Fp254Impl, fq::Fq},
+    },
+    core::utils::{SerializableCircuit, check_guest, gen_sub_circuits},
+};
+use zkm_sdk::{
+    ProverClient, ZKMProofWithPublicValues, ZKMPublicValues, ZKMStdin, include_elf, utils,
+};
 
 /// The ELF we want to execute inside the zkVM.
 const ELF: &[u8] = include_elf!("verifiable-circuit");
+
+fn split_circuit() {
+    let a = Fq::random();
+    let mut circuit = Fq::div6(Fq::wires_set(a));
+    circuit.gate_counts().print();
+    for gate in &mut circuit.1 {
+        gate.evaluate();
+    }
+
+    let c = Fq::from_wires(circuit.0.clone());
+    assert_eq!(c + c + c + c + c + c, a);
+
+    let garbled = gen_sub_circuits(&mut circuit, 8000);
+    // split the GC into sub-circuits
+    println!("garbled:{:?}", garbled.len());
+    garbled.iter().enumerate().for_each(|(i, c)| {
+        bincode::serialize_into(std::fs::File::create(format!("garbled_{i}.bin")).unwrap(), c)
+            .unwrap();
+    });
+}
 
 fn main() {
     // Setup logging.
     utils::setup_logger();
 
+    split_circuit();
+
     // The input stream that the guest will read from using `zkm_zkvm::io::read`. Note that the
     // types of the elements in the input stream must match the types being read in the guest.
     let mut stdin = ZKMStdin::new();
+    // TODO: load the corresponding gabled file
+    let mut file = std::fs::File::open("garbled_0.bin").unwrap();
+    let mut buf = Vec::new();
+    let sz = file.read_to_end(&mut buf).unwrap();
 
+    println!("check guest");
+    check_guest(&buf);
+
+    println!("file size: {}", sz);
+    stdin.write_vec(buf);
     // Create a `ProverClient` method.
     let client = ProverClient::new();
 
     // Execute the guest using the `ProverClient.execute` method, without generating a proof.
-    let (_, report) = client.execute(ELF, stdin.clone()).run().unwrap();
+    let (mut public_values, report) = client.execute(ELF, stdin.clone()).run().unwrap();
     println!("executed program with {} cycles", report.total_instruction_count());
+
+    // Note that this output is read from values committed to in the guest using
+    // `zkm_zkvm::io::commit`.
+    // let gates = public_values.read::<u32>();
+    // println!("gates: {}", gates);
+    // let gb0 = public_values.read::<[u8; 32]>();
+    // println!("gates: {:?}", gb0);
+    // let gb0_ = public_values.read::<[u8; 32]>();
+    // println!("gates: {:?}", gb0_);
 
     // Generate the proof for the given guest and input.
     let (pk, vk) = client.setup(ELF);
     let mut proof = client.prove(&pk, stdin).run().unwrap();
 
     println!("generated proof");
-
-    // Read and verify the output.
-    //
-    // Note that this output is read from values committed to in the guest using
-    // `zkm_zkvm::io::commit`.
-    let _ = proof.public_values.read::<u32>();
-    let a = proof.public_values.read::<u32>();
-    let b = proof.public_values.read::<u32>();
-
-    println!("a: {}", a);
-    println!("b: {}", b);
 
     // Verify proof and public values
     client.verify(&proof, &vk).expect("verification failed");

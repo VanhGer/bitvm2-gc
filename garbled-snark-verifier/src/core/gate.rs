@@ -1,10 +1,13 @@
+use serde::{Deserialize, Serialize};
+
 use crate::{bag::*, core::utils::bit_to_usize};
 use core::ops::{Add, AddAssign};
 
 // Except Xor, Xnor and Not, each enum's bitmask represent the boolean operation ((a XOR bit_2) AND (b XOR bit_1)) XOR bit_0
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub enum GateType {
+    #[default]
     And = 0,
     Nand = 1,
     Nimp = 2,
@@ -39,7 +42,7 @@ impl TryFrom<u8> for GateType {
 
 const GATE_TYPE_COUNT: usize = 11;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Gate {
     pub wire_a: Wirex,
     pub wire_b: Wirex,
