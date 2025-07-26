@@ -1,5 +1,4 @@
 #![allow(dead_code)]
-mod dummy_circuit;
 use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
 use ark_ec::pairing::Pairing;
 use ark_ff::fields::Field;
@@ -16,13 +15,17 @@ use rand_chacha::ChaCha12Rng;
 use std::time::Instant;
 use tracing::{info, instrument};
 
-use crate::dummy_circuit::DummyCircuit;
 use garbled_snark_verifier::circuits::bn254::fr::Fr;
 use garbled_snark_verifier::circuits::bn254::g1::G1Affine;
 use garbled_snark_verifier::circuits::groth16::{
     VerifyingKey, groth16_verifier_montgomery_circuit,
 };
 use zkm_sdk::{ProverClient, ZKMProofWithPublicValues, ZKMStdin, include_elf, utils};
+
+mod dummy_circuit;
+use crate::dummy_circuit::DummyCircuit;
+mod mem_fs;
+use mem_fs::*;
 
 /// The ELF we want to execute inside the zkVM.
 const ELF: &[u8] = include_elf!("verifiable-circuit");
@@ -61,7 +64,6 @@ fn custom_groth16_verifier_circuit() -> Circuit {
     for gate in &mut circuit.1 {
         gate.evaluate();
     }
-    circuit.gate_counts().print();
     assert!(circuit.0[0].borrow().get_value());
 
     let elapsed = start.elapsed();
@@ -78,11 +80,7 @@ fn custom_deserialize_compressed_g2_circuit() -> Circuit {
     y_flag.borrow_mut().set(sy == p.y);
 
     let wires = Fq2::wires_set_montgomery(p.x);
-
     let mut circuit = deserialize_compressed_g2_circuit(wires.clone(), y_flag);
-
-    circuit.gate_counts().print();
-
     for gate in &mut circuit.1 {
         gate.evaluate();
     }
@@ -93,7 +91,6 @@ fn custom_deserialize_compressed_g2_circuit() -> Circuit {
     circuit
 }
 
-#[instrument]
 fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
     let start = Instant::now();
     let mut garbled_gates = circuit.garbled_gates();
@@ -109,9 +106,7 @@ fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
         .enumerate()
         .zip(garbled_gates.chunks_mut(max_gates))
         .map(|((i, w), garblings)| {
-            if i.is_multiple_of(10000) {
-                info!(step = "gen_sub_circuits", "Split batch {i}/{size}");
-            }
+            info!(step = "gen_sub_circuits", "Split batch {i}/{size}");
             let out = SerializableCircuit {
                 gates: w
                     .iter()
@@ -125,20 +120,27 @@ fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
                     .collect(),
                 garblings: garblings.to_vec(),
             };
+            let start = Instant::now();
             bincode::serialize_into(
-                std::fs::File::create(format!("garbled_{i}.bin")).unwrap(),
+                //std::fs::File::create(format!("garbled_{i}.bin")).unwrap(),
+                mem_fs::MemFile::create(format!("garbled_{i}.bin")).unwrap(),
                 &out,
             )
             .unwrap();
+            let elapsed = start.elapsed();
+            info!(step = "gen_sub_circuits", elapsed = ?elapsed, "Writing garbled_{i}.bin");
         })
         .collect();
     let elapsed = start.elapsed();
-    info!(step = "split gates", elapsed =? elapsed);
+    info!(step = "gen_sub_circuits", elapsed =? elapsed, "total time");
 }
 
-#[instrument]
 fn split_circuit() {
-    let mut circuit = custom_groth16_verifier_circuit();
+    let mut circuit = custom_deserialize_compressed_g2_circuit();
+
+    circuit.gate_counts().print();
+    println!("Wires: {}", circuit.0.len());
+    
     gen_sub_circuits(&mut circuit, 7_000_000);
 }
 
@@ -157,7 +159,8 @@ fn main() {
     // types of the elements in the input stream must match the types being read in the guest.
     let mut stdin = ZKMStdin::new();
 
-    let ser_sc_0 = std::fs::read("garbled_0.bin").unwrap();
+    //let ser_sc_0 = std::fs::read("garbled_0.bin").unwrap();
+    let ser_sc_0 = mem_fs::MemFile::read("garbled_0.bin").unwrap();
     info!("ser_sc_0 size: {:?} bytes", ser_sc_0.len());
 
     // info!("Check guest");

@@ -16,7 +16,7 @@ impl Circuit {
     // calculate all ciphertext, and send to evaluator
     pub fn garbled_gates(&self) -> Vec<Option<S>> {
         self.1.iter().enumerate().map(|(i, gate)| {
-            if i.is_multiple_of(100000) {
+            if i.is_multiple_of(1000000) {
                 println!("Garble batch: {}/{}", i, self.1.len());
             }
             gate.garbled()
