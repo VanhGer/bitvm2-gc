@@ -1107,7 +1107,7 @@ dependencies = [
  "clang-sys",
  "itertools 0.13.0",
  "log",
- "prettyplease 0.2.35",
+ "prettyplease 0.2.36",
  "proc-macro2",
  "quote",
  "regex",
@@ -1524,9 +1524,15 @@ dependencies = [
  "encode_unicode",
  "libc",
  "once_cell",
- "unicode-width",
+ "unicode-width 0.2.1",
  "windows-sys 0.59.0",
 ]
+
+[[package]]
+name = "const-default"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b396d1f76d455557e1218ec8066ae14bba60b4b36ecd55577ba979f5db7ecaa"
 
 [[package]]
 name = "const-hex"
@@ -1627,6 +1633,12 @@ checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
 dependencies = [
  "cfg-if",
 ]
+
+[[package]]
+name = "critical-section"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 
 [[package]]
 name = "crossbeam-channel"
@@ -2073,6 +2085,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-alloc"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f2de9133f68db0d4627ad69db767726c99ff8585272716708227008d3f1bddd"
+dependencies = [
+ "const-default",
+ "critical-section",
+ "linked_list_allocator",
+ "rlsf",
+]
+
+[[package]]
 name = "ena"
 version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2335,7 +2359,7 @@ dependencies = [
  "ethers-core",
  "ethers-etherscan",
  "eyre",
- "prettyplease 0.2.35",
+ "prettyplease 0.2.36",
  "proc-macro2",
  "quote",
  "regex",
@@ -3531,7 +3555,7 @@ dependencies = [
  "console",
  "number_prefix",
  "portable-atomic",
- "unicode-width",
+ "unicode-width 0.2.1",
  "web-time",
 ]
 
@@ -3847,6 +3871,12 @@ name = "linked-hash-map"
 version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0717cef1bc8b636c6e1c1bbdefc09e6322da8a9321966e8928ef80d20f7f770f"
+
+[[package]]
+name = "linked_list_allocator"
+version = "0.10.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9afa463f5405ee81cdb9cc2baf37e08ec7e4c8209442b5d72c04cfb2cd6e6286"
 
 [[package]]
 name = "linux-raw-sys"
@@ -4938,7 +4968,7 @@ dependencies = [
 [[package]]
 name = "poseidon2"
 version = "0.1.0"
-source = "git+https://github.com/ProjectZKM/poseidon2#349f9c428857b0ffdd8f7e72c46992759fcb60ea"
+source = "git+https://github.com/ProjectZKM/poseidon2#74f9d09c4bf925402ca6b0a78035b50a1534e2b2"
 dependencies = [
  "cfg-if",
  "p3-field",
@@ -4989,9 +5019,9 @@ dependencies = [
 
 [[package]]
 name = "prettyplease"
-version = "0.2.35"
+version = "0.2.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "061c1221631e079b26479d25bbf2275bfe5917ae8419cd7e34f13bfc2aa7539a"
+checksum = "ff24dfcda44452b9816fff4cd4227e1bb73ff5a2f1bc1105aa92fb8565ce44d2"
 dependencies = [
  "proc-macro2",
  "syn 2.0.104",
@@ -5526,6 +5556,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "rlsf"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "222fb240c3286247ecdee6fa5341e7cdad0ffdf8e7e401d9937f2d58482a20bf"
+dependencies = [
+ "cfg-if",
+ "const-default",
+ "libc",
+ "svgbobdoc",
 ]
 
 [[package]]
@@ -6298,6 +6340,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
+name = "svgbobdoc"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2c04b93fc15d79b39c63218f15e3fdffaa4c227830686e3b7c5f41244eb3e50"
+dependencies = [
+ "base64 0.13.1",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+ "unicode-width 0.1.14",
+]
+
+[[package]]
 name = "svm-rs"
 version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7036,6 +7091,12 @@ checksum = "5a5f39404a5da50712a4c1eecf25e90dd62b613502b7e925fd4e4d19b5c96512"
 
 [[package]]
 name = "unicode-width"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7dd6e30e90baa6f72411720665d41d89b9a3d039dc45b8faea1ddd07f617f6af"
+
+[[package]]
+name = "unicode-width"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a1a07cc7db3810833284e8d372ccdc6da29741639ecc70c9ec107df0fa6154c"
@@ -7180,9 +7241,20 @@ name = "verifiable-circuit-host"
 version = "0.0.1"
 dependencies = [
  "ark-bn254",
+ "ark-crypto-primitives",
+ "ark-ec",
  "ark-ff 0.5.0",
+ "ark-groth16",
+ "ark-relations",
+ "ark-serialize 0.5.0",
+ "ark-std 0.5.0",
  "bincode",
  "garbled-snark-verifier",
+ "num-bigint 0.4.6",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "tracing",
+ "tracing-subscriber 0.3.19",
  "zkm-build",
  "zkm-sdk",
 ]
@@ -7949,7 +8021,7 @@ dependencies = [
 [[package]]
 name = "zkm-build"
 version = "1.1.1"
-source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#e33ca572e6b6e62c804c9208a61fe55f3fabae04"
+source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#dd65d0e9a787d7d77b4d2d4dcd326563e08ed86c"
 dependencies = [
  "anyhow",
  "cargo_metadata",
@@ -7961,7 +8033,7 @@ dependencies = [
 [[package]]
 name = "zkm-core-executor"
 version = "1.1.1"
-source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#e33ca572e6b6e62c804c9208a61fe55f3fabae04"
+source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#dd65d0e9a787d7d77b4d2d4dcd326563e08ed86c"
 dependencies = [
  "anyhow",
  "bincode",
@@ -8002,7 +8074,7 @@ dependencies = [
 [[package]]
 name = "zkm-core-machine"
 version = "1.1.1"
-source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#e33ca572e6b6e62c804c9208a61fe55f3fabae04"
+source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#dd65d0e9a787d7d77b4d2d4dcd326563e08ed86c"
 dependencies = [
  "bincode",
  "cfg-if",
@@ -8054,7 +8126,7 @@ dependencies = [
 [[package]]
 name = "zkm-curves"
 version = "1.1.1"
-source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#e33ca572e6b6e62c804c9208a61fe55f3fabae04"
+source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#dd65d0e9a787d7d77b4d2d4dcd326563e08ed86c"
 dependencies = [
  "cfg-if",
  "curve25519-dalek",
@@ -8076,7 +8148,7 @@ dependencies = [
 [[package]]
 name = "zkm-derive"
 version = "1.1.1"
-source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#e33ca572e6b6e62c804c9208a61fe55f3fabae04"
+source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#dd65d0e9a787d7d77b4d2d4dcd326563e08ed86c"
 dependencies = [
  "quote",
  "syn 1.0.109",
@@ -8085,7 +8157,7 @@ dependencies = [
 [[package]]
 name = "zkm-lib"
 version = "1.1.1"
-source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#e33ca572e6b6e62c804c9208a61fe55f3fabae04"
+source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#dd65d0e9a787d7d77b4d2d4dcd326563e08ed86c"
 dependencies = [
  "bincode",
  "cfg-if",
@@ -8111,7 +8183,7 @@ dependencies = [
 [[package]]
 name = "zkm-primitives"
 version = "1.1.1"
-source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#e33ca572e6b6e62c804c9208a61fe55f3fabae04"
+source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#dd65d0e9a787d7d77b4d2d4dcd326563e08ed86c"
 dependencies = [
  "bincode",
  "hex",
@@ -8147,7 +8219,7 @@ dependencies = [
 [[package]]
 name = "zkm-prover"
 version = "1.1.1"
-source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#e33ca572e6b6e62c804c9208a61fe55f3fabae04"
+source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#dd65d0e9a787d7d77b4d2d4dcd326563e08ed86c"
 dependencies = [
  "anyhow",
  "bincode",
@@ -8186,7 +8258,7 @@ dependencies = [
 [[package]]
 name = "zkm-recursion-circuit"
 version = "1.1.1"
-source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#e33ca572e6b6e62c804c9208a61fe55f3fabae04"
+source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#dd65d0e9a787d7d77b4d2d4dcd326563e08ed86c"
 dependencies = [
  "hashbrown 0.14.5",
  "itertools 0.13.0",
@@ -8219,7 +8291,7 @@ dependencies = [
 [[package]]
 name = "zkm-recursion-compiler"
 version = "1.1.1"
-source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#e33ca572e6b6e62c804c9208a61fe55f3fabae04"
+source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#dd65d0e9a787d7d77b4d2d4dcd326563e08ed86c"
 dependencies = [
  "backtrace",
  "itertools 0.13.0",
@@ -8240,7 +8312,7 @@ dependencies = [
 [[package]]
 name = "zkm-recursion-core"
 version = "1.1.1"
-source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#e33ca572e6b6e62c804c9208a61fe55f3fabae04"
+source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#dd65d0e9a787d7d77b4d2d4dcd326563e08ed86c"
 dependencies = [
  "backtrace",
  "ff 0.13.1",
@@ -8276,7 +8348,7 @@ dependencies = [
 [[package]]
 name = "zkm-recursion-derive"
 version = "1.1.1"
-source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#e33ca572e6b6e62c804c9208a61fe55f3fabae04"
+source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#dd65d0e9a787d7d77b4d2d4dcd326563e08ed86c"
 dependencies = [
  "quote",
  "syn 1.0.109",
@@ -8285,7 +8357,7 @@ dependencies = [
 [[package]]
 name = "zkm-recursion-gnark-ffi"
 version = "1.1.1"
-source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#e33ca572e6b6e62c804c9208a61fe55f3fabae04"
+source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#dd65d0e9a787d7d77b4d2d4dcd326563e08ed86c"
 dependencies = [
  "anyhow",
  "bincode",
@@ -8310,7 +8382,7 @@ dependencies = [
 [[package]]
 name = "zkm-sdk"
 version = "1.1.1"
-source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#e33ca572e6b6e62c804c9208a61fe55f3fabae04"
+source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#dd65d0e9a787d7d77b4d2d4dcd326563e08ed86c"
 dependencies = [
  "alloy-signer",
  "alloy-signer-local",
@@ -8357,7 +8429,7 @@ dependencies = [
 [[package]]
 name = "zkm-stark"
 version = "1.1.1"
-source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#e33ca572e6b6e62c804c9208a61fe55f3fabae04"
+source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#dd65d0e9a787d7d77b4d2d4dcd326563e08ed86c"
 dependencies = [
  "arrayref",
  "hashbrown 0.14.5",
@@ -8399,10 +8471,12 @@ dependencies = [
 [[package]]
 name = "zkm-zkvm"
 version = "1.1.1"
-source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#e33ca572e6b6e62c804c9208a61fe55f3fabae04"
+source = "git+https://github.com/ProjectZKM/Ziren?branch=poseidon2#dd65d0e9a787d7d77b4d2d4dcd326563e08ed86c"
 dependencies = [
  "bincode",
  "cfg-if",
+ "critical-section",
+ "embedded-alloc",
  "getrandom 0.2.16",
  "lazy_static",
  "libm",

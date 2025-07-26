@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-zkm-zkvm = { workspace = true }
+zkm-zkvm = { workspace = true, features = ["embedded"] }
 garbled-snark-verifier = { workspace = true }
 ark-bn254 = { version = "0.5.0", features = ["curve", "scalar_field"], default-features = false }
 ark-ff = "0.5.0"
@@ -15,4 +15,4 @@ sha2 = ["garbled-snark-verifier/garbled", "garbled-snark-verifier/_sha2", "garbl
 poseidon2 = ["garbled-snark-verifier/garbled", "garbled-snark-verifier/_poseidon2", "garbled-snark-verifier/_getrandom"]
 blake3 = ["garbled-snark-verifier/garbled", "garbled-snark-verifier/_blake3", "garbled-snark-verifier/_getrandom"]
 
-default = ["poseidon2"]
+default = ["sha2"]

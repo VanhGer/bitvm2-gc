@@ -6,15 +6,6 @@ Commit Reference
 
 The `garbled-snark-verifier` is modified from [garbled-snark-verifier:5a2cd4](https://github.com/BitVM/garbled-snark-verifier/commit/5a2cd4dc6cb19e37adb1b3ab94414e01d1e8b338).
 
-**Benchmark Results**
-
-| Hash Function        | Cycles        |
-|----------------------|---------------|
-| Blake3               | 4,015,285,370 |
-| Poseidon2 Precompile | 3,314,475,262 |
-| SHA2                 | 7,887,069,170 |
-| SHA2 Precompile      | 3,832,397,090 |
-
 To switch between hash functions in the guest program, modify the default feature in `verifiable-circuit/Cargo.toml`:
 
 Blake3
@@ -37,3 +28,22 @@ Then run:
 cd verifiable-circuit-host
 cargo run -r
 ```
+
+## Benchmarks
+Server configuration: 32 core, 480G RAM
+
+|Program| Gates | Cycles | Peak memory | Garbling(s) | Spliting(s) | Single Execution(s) |
+|---|---| ---|---| --- | --- |
+| deserialize_compressed_g2_circuit | and variants: 122185357, xor variants: 350864003, not: 550724, total:473600084 |  4268330910 * 68 | 102G | 255 | 480M/(IOPS) = 188 |  178 |
+| groth16_verifier_circuit | and variants: 2718558275, xor variants: 7617087185, not: 62381441, total: 10398026901 |  |  |  |  |   
+
+
+Proving efficiency:  100M/mins on 5 GPU cards.
+
+
+### Memory
+Total Circuit: 10g * (1 + 4 + 8 * 3) = 290g, 1: gate type, 4: gid, 8: wire reference 
+Garblings: 2.7g * 16 = 43g, 2.7g: non-free gates 
+
+Opt 1: change the RefCell to u32, will save 10g * 12 = 120g
+

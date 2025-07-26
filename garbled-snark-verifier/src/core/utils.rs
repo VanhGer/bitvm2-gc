@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, sync::atomic::AtomicU32};
 
 use serde::{Deserialize, Serialize};
 
@@ -7,12 +7,26 @@ use crate::{
     core::gate::GateType,
 };
 
+use std::sync::atomic::Ordering;
+
+pub const LABLE_SIZE: usize = 16;
+// FIXME: set up a private global difference
+pub static DELTA: S = S::one();
+
+// u32 is not enough for current gates scale. 
+pub static GID: AtomicU32 = AtomicU32::new(0);
+
+#[inline(always)]
+pub fn inc_gid() -> u32 {
+    GID.fetch_add(1, Ordering::SeqCst) + 1
+}
+
 pub fn bit_to_usize(bit: bool) -> usize {
     if bit { 1 } else { 0 }
 }
 
 #[allow(unused_variables)]
-pub fn hash(input: &[u8]) -> [u8; 32] {
+pub fn hash(input: &[u8]) -> [u8; LABLE_SIZE] {
     #[allow(unused_assignments)]
     let mut output = [0u8; 32];
 
@@ -36,7 +50,7 @@ pub fn hash(input: &[u8]) -> [u8; 32] {
         use poseidon2::poseidon2;
         output = poseidon2(input);
     }
-    output
+    unsafe { *(output.as_ptr() as *const [u8; LABLE_SIZE]) }
 }
 
 #[derive(Serialize, Deserialize, Default, Clone)]
@@ -45,12 +59,13 @@ pub struct SerializableGate {
     pub wire_b: Wire,
     pub wire_c: Wire,
     pub gate_type: GateType,
+    pub gid: u32,
 }
 
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct SerializableCircuit {
     pub gates: Vec<SerializableGate>, // Must also be serializable
-    pub garblings: Vec<Vec<S>>,
+    pub garblings: Vec<Option<S>>,
 }
 
 impl From<&Circuit> for SerializableCircuit {
@@ -63,6 +78,7 @@ impl From<&Circuit> for SerializableCircuit {
                     wire_b: w.wire_b.borrow().clone(),
                     wire_c: w.wire_c.borrow().clone(),
                     gate_type: w.gate_type,
+                    gid: w.gid,
                 })
                 .collect();
         Self { gates, garblings: Vec::new() }
@@ -71,64 +87,25 @@ impl From<&Circuit> for SerializableCircuit {
 
 impl From<&SerializableCircuit> for Circuit {
     fn from(sc: &SerializableCircuit) -> Self {
-        //let wires = sc.wires.into_iter().map(|w| Rc::new(RefCell::new(w))).collect();
         let mut wires = vec![];
         let gates = sc
             .gates
             .iter()
             .map(|g| {
-                let a_wirex = Rc::new(RefCell::new(g.wire_a.clone()));
-                let b_wirex = Rc::new(RefCell::new(g.wire_b.clone()));
-                let c_wirex = Rc::new(RefCell::new(g.wire_c.clone()));
-                wires.push(a_wirex);
-                wires.push(b_wirex);
-                wires.push(c_wirex);
+                wires.push(Rc::new(RefCell::new(g.wire_a.clone())));
+                wires.push(Rc::new(RefCell::new(g.wire_b.clone())));
+                wires.push(Rc::new(RefCell::new(g.wire_c.clone())));
                 Gate {
                     wire_a: wires[wires.len() - 3].clone(),
                     wire_b: wires[wires.len() - 2].clone(),
                     wire_c: wires[wires.len() - 1].clone(),
                     gate_type: g.gate_type,
+                    gid: g.gid,
                 }
             })
             .collect();
         Self(wires, gates)
     }
-}
-
-pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) -> Vec<SerializableCircuit> {
-    let mut gates = circuit.garbled_gates();
-    let mut result = Vec::new();
-
-    let size = circuit.1.len().div_ceil(max_gates);
-    let mut serialized_gates: Vec<Vec<SerializableGate>> = vec![Vec::new(); size];
-
-    let _: Vec<_> = serialized_gates
-        .iter_mut()
-        .zip(circuit.1.chunks(max_gates))
-        .map(|(out, w)| {
-            *out = w
-                .iter()
-                .map(|w| SerializableGate {
-                    wire_a: w.wire_a.borrow().clone(),
-                    wire_b: w.wire_b.borrow().clone(),
-                    wire_c: w.wire_c.borrow().clone(),
-                    gate_type: w.gate_type,
-                })
-                .collect();
-        })
-        .collect();
-
-    let mut i = 0;
-    while !gates.is_empty() {
-        let chunk_size = max_gates.min(gates.len());
-        let garblings: Vec<Vec<S>> = gates.drain(0..chunk_size).collect();
-
-        let sc = SerializableCircuit { gates: std::mem::take(&mut serialized_gates[i]), garblings };
-        result.push(sc);
-        i = i + 1;
-    }
-
-    result
 }
 
 pub fn check_guest(buf: &[u8]) {
