@@ -211,18 +211,21 @@ impl Gate {
     //   input labels a, b
     //   ciphertext c
     //   gate id gid
-    pub fn e(&self) -> Box<dyn Fn(bool, bool, S, S, S, u32) -> (bool, S) + '_> {
+    #[allow(clippy::type_complexity)]
+    pub fn e(&self) -> Box<dyn Fn(bool, bool, S, S, Option<S>, u32) -> (bool, S) + '_> {
         match self.gate_type {
             GateType::And | GateType::Nand | GateType::Nimp | GateType::Imp => {
                 Box::new(|x, y, a, b, c, gid| -> (bool, S) {
-                    let o = if !x { a.hash_ext(gid) } else { a.hash_ext(gid) ^ c ^ b };
+                    assert!(c.is_some());
+                    let o = if !x { a.hash_ext(gid) } else { a.hash_ext(gid) ^ c.unwrap() ^ b };
                     (self.f()(x, y), o)
                 })
             }
 
             GateType::Ncimp | GateType::Cimp | GateType::Nor | GateType::Or => {
                 Box::new(|x, y, a, b, c, gid| -> (bool, S) {
-                    let o = if x { a.hash_ext(gid) } else { a.hash_ext(gid) ^ c ^ b };
+                    assert!(c.is_some());
+                    let o = if x { a.hash_ext(gid) } else { a.hash_ext(gid) ^ c.unwrap() ^ b };
                     (self.f()(x, y), o)
                 })
             }
@@ -248,6 +251,14 @@ impl Gate {
         let (c0, ciphertext) = self.g()(a0, b0, self.gid);
         self.wire_c.borrow_mut().set_label(c0);
         ciphertext
+    }
+
+    pub fn check_garbled_circuit(&self, garbled_evaluation: S) -> bool {
+        if garbled_evaluation != self.wire_c.borrow().select(false)
+            && garbled_evaluation != self.wire_c.borrow().select(true) {
+            return false;
+        }
+        true
     }
 }
 
