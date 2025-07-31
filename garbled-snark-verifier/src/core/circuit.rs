@@ -15,12 +15,16 @@ impl Circuit {
 
     // calculate all ciphertext, and send to evaluator
     pub fn garbled_gates(&self) -> Vec<Option<S>> {
-        self.1.iter().enumerate().map(|(i, gate)| {
-            if i.is_multiple_of(1000000) {
-                println!("Garble batch: {}/{}", i, self.1.len());
-            }
-            gate.garbled()
-        }).collect()
+        self.1
+            .iter()
+            .enumerate()
+            .map(|(i, gate)| {
+                if i.is_multiple_of(1000000) {
+                    println!("Garble batch: {}/{}", i, self.1.len());
+                }
+                gate.garbled()
+            })
+            .collect()
     }
 
     pub fn extend(&mut self, circuit: Self) -> Wires {
@@ -52,9 +56,9 @@ impl Circuit {
         gc
     }
 
-    pub fn garbled_evaluate(&mut self, garblings: &[Option<S>]) -> S{
+    pub fn garbled_evaluate(&self, garblings: &[Option<S>]) -> S {
         let mut garbled_evaluations = vec![];
-        for (i, gate) in self.1.iter_mut().enumerate() {
+        for (i, gate) in self.1.iter().enumerate() {
             let (output, output_label) = gate.e()(
                 gate.wire_a.borrow().get_value(),
                 gate.wire_b.borrow().get_value(),
@@ -68,7 +72,7 @@ impl Circuit {
             garbled_evaluations.push((output, output_label));
         }
 
-        for (i, gate) in self.1.iter_mut().enumerate() {
+        for (i, gate) in self.1.iter().enumerate() {
             let check = gate.check_garbled_circuit(garbled_evaluations[i].1);
             assert!(check);
         }
@@ -79,14 +83,16 @@ impl Circuit {
 
 #[cfg(test)]
 mod tests {
-    use ark_ec::CurveGroup;
-    use ark_ff::{AdditiveGroup, Field};
-    use crate::bag::{new_wirex, Circuit, Gate};
+    use crate::bag::new_wirex;
     use crate::circuits::basic::selector;
     use crate::circuits::bn254::fq6::Fq6;
-    use crate::circuits::bn254::g1::{projective_to_affine_montgomery, G1Projective};
+    use crate::circuits::bn254::g1::{G1Projective, projective_to_affine_montgomery};
     use crate::core::utils::DELTA;
+    use ark_ec::CurveGroup;
+    use ark_ff::{AdditiveGroup, Field};
 
+
+    #[cfg(feature = "garbled")]
     #[test]
     fn test_selector_circuit_garbled_evaluation() {
         let mut wire_a = new_wirex();
@@ -118,6 +124,7 @@ mod tests {
         assert_eq!(output_label, computed_output_label);
     }
 
+    #[cfg(feature = "garbled")]
     #[test]
     fn test_fq6_mul_montgomery_circuit_garbled_evaluation() {
         let a = Fq6::random();
@@ -134,6 +141,7 @@ mod tests {
         let _ = circuit.garbled_evaluate(&garblings);
     }
 
+    #[cfg(feature = "garbled")]
     #[test]
     fn test_g1_projective_to_affine_montgomery_circuit_garbled_evaluation() {
         let p_projective = G1Projective::random().double();
@@ -148,5 +156,4 @@ mod tests {
         let garblings = circuit.garbled_gates();
         let _ = circuit.garbled_evaluate(&garblings);
     }
-
 }

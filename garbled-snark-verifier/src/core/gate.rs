@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 use crate::{
     bag::*,
@@ -22,6 +23,25 @@ pub enum GateType {
     Xor,
     Xnor,
     Not,
+}
+
+impl fmt::Display for GateType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            GateType::And => "And",
+            GateType::Nand => "Nand",
+            GateType::Nimp => "Nimp",
+            GateType::Imp => "Imp",
+            GateType::Ncimp => "Ncimp",
+            GateType::Cimp => "Cimp",
+            GateType::Nor => "Nor",
+            GateType::Or => "Or",
+            GateType::Xor => "Xor",
+            GateType::Xnor => "Xnor",
+            GateType::Not => "Not",
+        };
+        write!(f, "{}", s)
+    }
 }
 
 // only for AND variants
@@ -57,14 +77,29 @@ unsafe impl Sync for Gate {}
 
 impl Gate {
     pub fn new(wire_a: Wirex, wire_b: Wirex, wire_c: Wirex, gate_type: GateType) -> Self {
-        Self { wire_a, wire_b, wire_c, gate_type, gid: {
-            let gid = inc_gid() - 1;
-            if gid.is_multiple_of(1000000) {
-                println!("gid: {gid}")
-            }
-            gid
+        Self {
+            wire_a,
+            wire_b,
+            wire_c,
+            gate_type,
+            gid: {
+                let gid = inc_gid() - 1;
+                if gid.is_multiple_of(1000000) {
+                    println!("gid: {gid}")
+                }
+                gid
+            },
         }
-        }
+    }
+
+    pub fn new_with_gid(
+        wire_a: Wirex,
+        wire_b: Wirex,
+        wire_c: Wirex,
+        gate_type: GateType,
+        gid: u32,
+    ) -> Self {
+        Self { wire_a, wire_b, wire_c, gate_type, gid }
     }
 
     pub fn and(wire_a: Wirex, wire_b: Wirex, wire_c: Wirex) -> Self {
@@ -255,7 +290,8 @@ impl Gate {
 
     pub fn check_garbled_circuit(&self, garbled_evaluation: S) -> bool {
         if garbled_evaluation != self.wire_c.borrow().select(false)
-            && garbled_evaluation != self.wire_c.borrow().select(true) {
+            && garbled_evaluation != self.wire_c.borrow().select(true)
+        {
             return false;
         }
         true
