@@ -2832,6 +2832,7 @@ dependencies = [
 name = "garbled-snark-verifier"
 version = "0.1.0"
 dependencies = [
+ "aes",
  "ark-bn254",
  "ark-crypto-primitives",
  "ark-ec",
