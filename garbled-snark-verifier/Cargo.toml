@@ -22,6 +22,7 @@ getrandom = { version = "0.2", features = ["custom"], optional = true }
 blake3 = { version = "1.6.1", optional = true }
 sha2 = { workspace = true, optional = true }
 poseidon2 = {workspace = true, optional = true }
+aes = {version = "0.8.4", optional = true}
 ark-serialize = { version = "0.5.0", default-features = false, features = [ "derive" ] }
 
 bincode = { workspace = true }
@@ -36,4 +37,5 @@ garbled = []
 _sha2 = ["sha2"]
 _poseidon2 = ["poseidon2"]
 _blake3 = ["blake3"]
+_aes = ["aes"]
 _getrandom = ["getrandom/custom"]
