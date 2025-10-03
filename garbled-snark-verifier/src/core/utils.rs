@@ -4,12 +4,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     bag::{Circuit, Gate, S, Wire},
-    core::gate::GateType,
+    core::gate::{GateType, gate_garbled},
 };
 
 use std::sync::atomic::Ordering;
 
-pub const LABLE_SIZE: usize = 16;
+pub const LABEL_SIZE: usize = 16;
 // FIXME: set up a private global difference
 pub static DELTA: S = S::one();
 
@@ -26,7 +26,7 @@ pub fn bit_to_usize(bit: bool) -> usize {
 }
 
 #[allow(unused_variables)]
-pub fn hash(input: &[u8]) -> [u8; LABLE_SIZE] {
+pub fn hash(input: &[u8]) -> [u8; LABEL_SIZE] {
     #[allow(unused_assignments, unused_mut)]
     let mut output = [0u8; 32];
 
@@ -52,11 +52,9 @@ pub fn hash(input: &[u8]) -> [u8; LABLE_SIZE] {
     }
     #[cfg(feature = "_aes")]
     {
-        use std::cmp::min;
         use aes::Aes128;
-        use aes::cipher::{
-            BlockEncrypt, KeyInit, generic_array::GenericArray,
-        };
+        use aes::cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
+        use std::cmp::min;
 
         // hardcoded AES key
         let key = GenericArray::from_slice(&[0u8; 16]);
@@ -75,10 +73,10 @@ pub fn hash(input: &[u8]) -> [u8; LABLE_SIZE] {
         }
         output[..16].copy_from_slice(&block);
     }
-    unsafe { *(output.as_ptr() as *const [u8; LABLE_SIZE]) }
+    unsafe { *(output.as_ptr() as *const [u8; LABEL_SIZE]) }
 }
 
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Default, Debug, Clone)]
 pub struct SerializableGate {
     pub wire_a: Wire,
     pub wire_b: Wire,
@@ -91,6 +89,24 @@ pub struct SerializableGate {
 pub struct SerializableCircuit {
     pub gates: Vec<SerializableGate>, // Must also be serializable
     pub garblings: Vec<Option<S>>,
+}
+
+impl SerializableCircuit {
+    fn garbled_gates(&mut self) -> Vec<Option<S>> {
+        self.gates
+            .iter_mut()
+            .enumerate()
+            .map(|(i, gate)| {
+                let a0 = gate.wire_a.select(false);
+                let b0 = gate.wire_b.select(false);
+
+                let (c0, ciphertext) = gate_garbled(a0, b0, gate.gid, gate.gate_type);
+                gate.wire_c.set_label(c0);
+
+                ciphertext
+            })
+            .collect()
+    }
 }
 
 impl From<&Circuit> for SerializableCircuit {
@@ -133,9 +149,112 @@ impl From<&SerializableCircuit> for Circuit {
     }
 }
 
+struct Reader<'a> {
+    buf: &'a [u8],
+    cursor: usize,
+}
+
+impl<'a> Reader<'a> {
+    pub fn new(buf: &'a [u8]) -> Self {
+        Reader { buf, cursor: 0 }
+    }
+
+    fn read_u8(&mut self) -> u8 {
+        let b = self.buf[self.cursor];
+        self.cursor += 1;
+        b
+    }
+
+    fn read_u32(&mut self) -> u32 {
+        let start = self.cursor;
+        let v = u32::from_le_bytes(self.buf[start..start + 4].try_into().unwrap());
+        self.cursor += 4;
+        v
+    }
+
+    fn read_u64(&mut self) -> u64 {
+        let start = self.cursor;
+        let v = u64::from_le_bytes(self.buf[start..start + 8].try_into().unwrap());
+        self.cursor += 8;
+        v
+    }
+
+    fn read_s(&mut self) -> S {
+        let mut arr = [0u8; LABEL_SIZE];
+        arr.copy_from_slice(&self.buf[self.cursor..self.cursor + LABEL_SIZE]);
+        self.cursor += LABEL_SIZE;
+        S(arr)
+    }
+
+    fn read_option_s(&mut self) -> Option<S> {
+        match self.read_u8() {
+            0 => None,
+            1 => Some(self.read_s()),
+            other => panic!("Invalid Option<S> tag: {}", other),
+        }
+    }
+
+    fn skip_option_bool(&mut self) {
+        if self.read_u8() != 0 {
+            self.cursor += 1;
+        }
+    }
+
+    fn skip_wire(&mut self) {
+        // Option<S>
+        if self.read_u8() != 0 {
+            self.cursor += LABEL_SIZE;
+        }
+        // Option<bool>
+        self.skip_option_bool();
+    }
+
+    fn read_gate_type(&mut self) -> GateType {
+        let d = self.read_u32();
+        GateType::try_from(d as u8).expect("Invalid GateType")
+    }
+}
+
 pub fn check_guest(buf: &[u8]) {
-    let sc: SerializableCircuit = bincode::deserialize(buf).unwrap();
-    let circuit: Circuit = (&sc).into();
-    let garblings = circuit.garbled_gates();
-    assert!(garblings == sc.garblings);
+    let mut reader = Reader::new(buf);
+
+    // 1. Read the number of gates from the start of the buffer.
+    // bincode serializes Vec length as a u64.
+    let num_gates = reader.read_u64() as usize;
+
+    // 2. Create a vector to store the computed garblings.
+    let mut computed_garblings = Vec::with_capacity(num_gates);
+
+    // 3. Loop through each gate's data in the stream.
+    for _ in 0..num_gates {
+        // For wire_a, read the label and correctly skip the rest of the wire.
+        let a0 = reader.read_option_s().expect("Missing wire_a label");
+        reader.skip_option_bool();
+
+        // For wire_b, read the label and correctly skip the rest of the wire.
+        let b0 = reader.read_option_s().expect("Missing wire_b label");
+        reader.skip_option_bool();
+
+        // Skip wire_c entirely.
+        reader.skip_wire();
+
+        // Read gate_type and gid.
+        let gate_type = reader.read_gate_type();
+        let gid = reader.read_u32();
+
+        // Immediately compute the garbling.
+        let (_, ciphertext) = gate_garbled(a0, b0, gid, gate_type);
+        computed_garblings.push(ciphertext);
+    }
+
+    // 4. At this point, the reader is at the start of the serialized `garblings` Vec.
+    // Read the number of expected garblings.
+    let num_garblings = reader.read_u64() as usize;
+    assert_eq!(num_gates, num_garblings, "Mismatch in number of garblings");
+
+    // 5. Compare computed garblings with expected garblings from the stream.
+    for i in 0..num_garblings {
+        let expected_garbling = reader.read_option_s();
+        assert_eq!(computed_garblings[i], expected_garbling, "Garbling mismatch at index {}", i);
+    }
 }

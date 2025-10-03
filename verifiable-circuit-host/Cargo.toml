@@ -1,13 +1,13 @@
 [package]
 name = "verifiable-circuit-host"
-version = "0.0.1" 
-edition = "2024" 
+version = "0.0.1"
+edition = "2024"
 default-run = "verifiable-circuit-host"
 publish = false
 
 [dependencies]
 zkm-sdk = { workspace = true }
-garbled-snark-verifier = { workspace = true, features = ["_sha2", "garbled", "_getrandom"] }
+garbled-snark-verifier = { workspace = true, features = ["_aes", "garbled", "_getrandom"] }
 ark-bn254 = { version = "0.5.0", features = ["curve", "scalar_field"], default-features = false }
 ark-ff = "0.5.0"
 bincode = { workspace = true }
@@ -22,14 +22,18 @@ ark-std = { version = "0.5.0", default-features = false }
 ark-crypto-primitives = "0.5.0"
 ark-relations = "0.5.0"
 ark-ec = "0.5.0"
-ark-serialize = { version = "0.5.0", default-features = false, features = [ "derive" ] }
+ark-serialize = { version = "0.5.0", default-features = false, features = ["derive"] }
 
 [build-dependencies]
-zkm-build = { workspace = true } 
+zkm-build = { workspace = true }
 
 [[bin]]
 name = "verifiable-circuit-host"
 path = "src/main.rs"
+
+[[bin]]
+name = "dv-snark"
+path = "src/dv_snark.rs"
 
 # [features]
 # cuda = ["zkm-sdk/cuda"]
