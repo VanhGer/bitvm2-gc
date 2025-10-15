@@ -1132,6 +1132,58 @@ mod precompute_table {
         table
     }
 
+    // generate precompute table for decompose triple scalar multiplication
+    pub(crate) fn emit_precompute_d3_table<T: CircuitTrait>(
+        bld: &mut T,
+        p0: &CurvePoint,
+        p1: &CurvePoint,
+        p2: &CurvePoint,
+    ) -> Vec<CurvePoint> {
+        let bs = vec![
+            [0, 0, 0],
+            [0, 1, 0],
+            [0, 1, 1],
+            [0, 0, 1],
+            [1, 0, 1],
+            [1, 0, 0],
+            [1, 1, 1],
+            [1, 1, 0],
+        ];
+
+        let table_size = bs.len();
+        let iden = CurvePoint::identity(bld);
+
+        let mut table = Vec::with_capacity(table_size);
+        table.push(iden);
+
+        for i in 1..table_size {
+            let temp_point = add_2_points_with_selects(bld, bs[i][0], p0, bs[i][1], p1);
+            let res_point = add_2_points_with_selects(bld, bs[i][2], &temp_point, 1, p2);
+            table.push(res_point);
+        }
+        table
+    }
+
+    fn add_2_points_with_selects<T: CircuitTrait>(
+        bld: &mut T,
+        select0: usize,
+        p0: &CurvePoint,
+        select1: usize,
+        p1: &CurvePoint,
+    ) -> CurvePoint {
+        if select0 == 0 && select1 == 0 {
+            return CurvePoint::identity(bld);
+        }
+        if select0 == 0 {
+            return p1.clone();
+        }
+        if select1 == 0 {
+            return p0.clone();
+        }
+        Template::emit_point_add_custom(bld, p0, p1)
+        // emit_point_add(bld, p0, p1)
+    }
+
     #[cfg(test)]
     mod test {
         use std::time::Instant;
@@ -1327,6 +1379,7 @@ mod precompute_table {
 /// Windowed tau-adic point scalar multiplication
 // TODO: Use PRTNAF for lower gate counts
 pub(crate) mod point_scalar_mul {
+    use crate::circuits::sect233k1::curve_scalar_mul_ckt::precompute_table::emit_precompute_d3_table;
     use super::super::{
         builder::{CircuitTrait, Template},
         curve_ckt::{CurvePoint, emit_point_frob},
@@ -1367,6 +1420,32 @@ pub(crate) mod point_scalar_mul {
         r
     }
 
+    // Compute [x1]P1 + x2[P2] + x3[P3].
+    pub(crate) fn emit_triple_scalar_multiplication<T: CircuitTrait>(
+        bld: &mut T,
+        k1: &Fr,
+        p1: &CurvePoint,
+        k2: &Fr,
+        p2: &CurvePoint,
+        k3: &Fr,
+        p3: &CurvePoint,
+    ) -> CurvePoint {
+        // precompute table for 3 points
+        let table = emit_precompute_d3_table(bld, p1, p2, p3);
+
+        let mut r = CurvePoint::identity(bld);
+        //Todo: set 155 as Global variable
+        for i in 0..155 {
+            r = Template::emit_point_add_custom(bld, &r, &r); // r = r * 2
+            // get the msb i-th bit of k1, k2, k3
+            // expected that k1, k2, k3 <= 2^155 after decomposition
+            let lidx = vec![k1[154 - i], k2[154 - i], k3[154 - i]];
+            let t_i = emit_lookup(bld, &table, lidx);
+            r = Template::emit_point_add_custom(bld, &r, &t_i);
+        }
+        r
+    }
+
     #[cfg(test)]
     mod test {
         use std::time::Instant;
@@ -1376,10 +1455,107 @@ pub(crate) mod point_scalar_mul {
 
         use super::*;
         use crate::circuits::sect233k1::builder::{CircuitAdapter, CircuitTrait};
+        use crate::circuits::sect233k1::curve_ckt::emit_point_add;
         use crate::circuits::sect233k1::curve_ref::CurvePointRef as InnerPointRef;
         use crate::circuits::sect233k1::curve_ref::point_scalar_multiplication;
         use crate::circuits::sect233k1::fr_ref::frref_to_bits;
         use crate::circuits::sect233k1::gf_ref::{bits_to_gfref, gfref_to_bits};
+
+
+        #[test]
+        // #[ignore]
+        fn test_decompose_msm() {
+            let p1 = InnerPointRef::generator();
+            let p2 = InnerPointRef::generator();
+            let p3 = InnerPointRef::generator();
+            let expected_output = InnerPointRef::identity(); // = 0
+
+            // let k1_be_bytes = vec![0, 0, 0, 76, 32, 127, 95, 210, 36, 2, 120, 190, 40, 68, 117, 182, 190, 186, 39, 139, 34, 22, 209, 162, 145, 49, 85, 52, 185, 207, 73, 164];
+            // let k2_be_bytes = vec![0, 0, 0, 23, 131, 89, 146, 104, 82, 75, 202, 174, 197, 236, 203, 236, 132, 40, 21, 111, 127, 206, 193, 117, 0, 204, 135, 146, 245, 215, 20, 198];
+            let x1_be_bytes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 132, 90, 202, 207, 74, 216, 137, 128, 23, 153, 179, 26, 120, 208, 216, 194, 204, 27, 175];
+            let x2_be_bytes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 164, 51, 1, 23, 237, 34, 156, 132, 2, 2, 72, 137, 33, 191, 82, 68, 248, 41, 120];
+            let x3_be_bytes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 40, 246, 226, 135, 148, 92, 64, 221, 255, 102, 55, 129, 127, 112, 201, 119, 28, 125, 180];
+            let x1 = BigUint::from_bytes_be(&x1_be_bytes);
+            let x2 = BigUint::from_bytes_be(&x2_be_bytes);
+            let x3 = BigUint::from_bytes_be(&x3_be_bytes);
+
+            // ++++++
+            let mut bld = CircuitAdapter::default();
+            let mut witness = Vec::<bool>::new();
+            let x1witness = frref_to_bits(&x1);
+            let x2witness = frref_to_bits(&x2);
+            let x3witness = frref_to_bits(&x3);
+
+            let p1witness: Vec<bool> = [&p1.x, &p1.s, &p1.z, &p1.t]
+                .iter()
+                .flat_map(|k| {
+                    let kb: Vec<bool> = gfref_to_bits(k).to_vec();
+                    kb
+                })
+                .collect();
+
+            let p2witness: Vec<bool> = [&p2.x, &p2.s, &p2.z, &p2.t]
+                .iter()
+                .flat_map(|k| {
+                    let kb: Vec<bool> = gfref_to_bits(k).to_vec();
+                    kb
+                })
+                .collect();
+
+            let p3witness: Vec<bool> = [&p3.x, &p3.s, &p3.z, &p3.t]
+                .iter()
+                .flat_map(|k| {
+                    let kb: Vec<bool> = gfref_to_bits(k).to_vec();
+                    kb
+                })
+                .collect();
+
+            let x1labels: Fr = bld.fresh();
+            let x2labels: Fr = bld.fresh();
+            let x3labels: Fr = bld.fresh();
+            let p1labels: CurvePoint =
+                CurvePoint { x: bld.fresh(), s: bld.fresh(), z: bld.fresh(), t: bld.fresh() };
+            let p2labels: CurvePoint =
+                CurvePoint { x: bld.fresh(), s: bld.fresh(), z: bld.fresh(), t: bld.fresh() };
+            let p3labels: CurvePoint =
+                CurvePoint { x: bld.fresh(), s: bld.fresh(), z: bld.fresh(), t: bld.fresh() };
+
+            witness.extend_from_slice(&x1witness);
+            witness.extend_from_slice(&x2witness);
+            witness.extend_from_slice(&x3witness);
+            witness.extend_from_slice(&p1witness);
+            witness.extend_from_slice(&p2witness);
+            witness.extend_from_slice(&p3witness);
+
+            println!("emit_triple_scalar_multiplication");
+            let st = Instant::now();
+            let out_bits = emit_triple_scalar_multiplication(&mut bld, &x1labels, &p1labels, &x2labels, &p2labels, &x3labels, &p3labels);
+            let st = st.elapsed();
+            println!("emit_triple_scalar_multiplication took {} seconds", st.as_secs());
+
+            // bld.write_bristol_periodic("psm4.bristol").unwrap(); // uncomment if you want to dump to bristol file
+
+            let stats = bld.gate_counts();
+            println!("{stats}");
+
+            // let wires = bld.eval_gates(&witness);
+            //
+            // println!("validating output");
+            // let ckt_x = out_bits.x.map(|id| wires[id]);
+            // let ckt_s = out_bits.s.map(|id| wires[id]);
+            // let ckt_z = out_bits.z.map(|id| wires[id]);
+            // let ckt_t = out_bits.t.map(|id| wires[id]);
+            //
+            // let ckt_out = InnerPointRef {
+            //     x: bits_to_gfref(&ckt_x),
+            //     s: bits_to_gfref(&ckt_s),
+            //     z: bits_to_gfref(&ckt_z),
+            //     t: bits_to_gfref(&ckt_t),
+            // };
+            //
+            // assert_eq!(ckt_out, expected_output);
+
+        }
 
         // ignore because of long running test
         #[test]
@@ -1455,6 +1631,58 @@ pub(crate) mod point_scalar_mul {
             };
 
             assert_eq!(ckt_out, out_ref);
+        }
+
+        // Todo: remove after finish decompose msm
+        #[test]
+        // This test just printout the circuit size for triple scalar multiplication
+        fn test_decompose_circuit_size() {
+            // ++++++
+            let mut bld = CircuitAdapter::default();
+            let x1labels: Fr = bld.fresh();
+            let x2labels: Fr = bld.fresh();
+            let x3labels: Fr = bld.fresh();
+            let p1labels: CurvePoint =
+                CurvePoint { x: bld.fresh(), s: bld.fresh(), z: bld.fresh(), t: bld.fresh() };
+            let p2labels: CurvePoint =
+                CurvePoint { x: bld.fresh(), s: bld.fresh(), z: bld.fresh(), t: bld.fresh() };
+            let p3labels: CurvePoint =
+                CurvePoint { x: bld.fresh(), s: bld.fresh(), z: bld.fresh(), t: bld.fresh() };
+
+            println!("emit_triple_scalar_multiplication");
+            let st = Instant::now();
+            let out_bits = emit_triple_scalar_multiplication(&mut bld, &x1labels, &p1labels, &x2labels, &p2labels, &x3labels, &p3labels);
+            let st = st.elapsed();
+            println!("emit_triple_scalar_multiplication took {} seconds", st.as_secs());
+            let stats = bld.gate_counts();
+            println!("{stats}");
+        }
+
+        // Todo: remove after finish decompose msm
+        #[test]
+        // This test just printout the circuit size for tau-adic scalar multiplication
+        fn test_tau_adic_sm_circuit_size() {
+            let window = 5;
+            // +++++++++++
+            let mut bld = CircuitAdapter::default();
+            let u0labels: Fr = bld.fresh();
+            let v0labels: Fr = bld.fresh();
+            let glabels: CurvePoint =
+                CurvePoint { x: bld.fresh(), s: bld.fresh(), z: bld.fresh(), t: bld.fresh() };
+            let gklabels: CurvePoint =
+                CurvePoint { x: bld.fresh(), s: bld.fresh(), z: bld.fresh(), t: bld.fresh() };
+
+            println!("emit_mul_windowed_tau");
+            let st = Instant::now();
+
+            let u0_g_labels = emit_mul_windowed_tau(&mut bld, &u0labels, &glabels, window);
+            let v0_gk_labels = emit_mul_windowed_tau(&mut bld, &v0labels, &gklabels, window);
+            let res_labels = emit_point_add(&mut bld, &u0_g_labels, &v0_gk_labels);
+
+            let st = st.elapsed();
+            println!("emit_mul_windowed_tau took {} seconds", st.as_secs());
+            let stats = bld.gate_counts();
+            println!("{stats}");
         }
     }
 }
