@@ -1573,6 +1573,14 @@ pub(crate) mod point_scalar_mul {
             };
 
             assert_eq!(ckt_out, expected_output);
+
+            // build circuit
+            println!("build circuit");
+            let mut circuit = bld.build(&witness);
+            let start = Instant::now();
+            let total_gates = circuit.gate_counts();
+            println!("gate_counts time: {:?}", start.elapsed());
+            total_gates.print();
         }
 
         // ignore because of long running test
