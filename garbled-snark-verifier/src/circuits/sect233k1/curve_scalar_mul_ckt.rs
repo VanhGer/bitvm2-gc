@@ -1141,13 +1141,13 @@ mod precompute_table {
     ) -> Vec<CurvePoint> {
         let bs = vec![
             [0, 0, 0],
+            [1, 0, 0],
             [0, 1, 0],
-            [0, 1, 1],
+            [1, 1, 0],
             [0, 0, 1],
             [1, 0, 1],
-            [1, 0, 0],
+            [0, 1, 1],
             [1, 1, 1],
-            [1, 1, 0],
         ];
 
         let table_size = bs.len();
@@ -1158,7 +1158,7 @@ mod precompute_table {
 
         for i in 1..table_size {
             let temp_point = add_2_points_with_selects(bld, bs[i][0], p0, bs[i][1], p1);
-            let res_point = add_2_points_with_selects(bld, bs[i][2], &temp_point, 1, p2);
+            let res_point = add_2_points_with_selects(bld, 1, &temp_point, bs[i][2], &p2,);
             table.push(res_point);
         }
         table
@@ -1496,6 +1496,15 @@ pub(crate) mod point_scalar_mul {
             let x2witness = frref_to_bits(&x2);
             let x3witness = frref_to_bits(&x3);
 
+            // println!("x1witness {:?}", x1witness);
+            // println!("x2witness {:?}", x2witness);
+            // println!("x3witness {:?}", x3witness);
+            // for i in 155..232 {
+            //     assert_eq!(x1witness[i], false);
+            //     assert_eq!(x2witness[i], false);
+            //     assert_eq!(x3witness[i], false);
+            // }
+
             let p1witness: Vec<bool> = [&p1.x, &p1.s, &p1.z, &p1.t]
                 .iter()
                 .flat_map(|k| {
@@ -1564,7 +1573,6 @@ pub(crate) mod point_scalar_mul {
             };
 
             assert_eq!(ckt_out, expected_output);
-
         }
 
         // ignore because of long running test
