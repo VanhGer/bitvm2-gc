@@ -1448,6 +1448,7 @@ pub(crate) mod point_scalar_mul {
 
     #[cfg(test)]
     mod test {
+        use std::thread::sleep;
         use std::time::Instant;
 
         use num_bigint::{BigUint, RandomBits};
@@ -1455,8 +1456,8 @@ pub(crate) mod point_scalar_mul {
 
         use super::*;
         use crate::circuits::sect233k1::builder::{CircuitAdapter, CircuitTrait};
-        use crate::circuits::sect233k1::curve_ckt::emit_point_add;
-        use crate::circuits::sect233k1::curve_ref::CurvePointRef as InnerPointRef;
+        use crate::circuits::sect233k1::curve_ckt::{emit_point_add, CompressedCurvePoint, CompressedCurvePointRef};
+        use crate::circuits::sect233k1::curve_ref::{point_add, CurvePointRef as InnerPointRef, CurvePointRef};
         use crate::circuits::sect233k1::curve_ref::point_scalar_multiplication;
         use crate::circuits::sect233k1::fr_ref::frref_to_bits;
         use crate::circuits::sect233k1::gf_ref::{bits_to_gfref, gfref_to_bits};
@@ -1467,17 +1468,26 @@ pub(crate) mod point_scalar_mul {
         fn test_decompose_msm() {
             let p1 = InnerPointRef::generator();
             let p2 = InnerPointRef::generator();
-            let p3 = InnerPointRef::generator();
             let expected_output = InnerPointRef::identity(); // = 0
 
-            // let k1_be_bytes = vec![0, 0, 0, 76, 32, 127, 95, 210, 36, 2, 120, 190, 40, 68, 117, 182, 190, 186, 39, 139, 34, 22, 209, 162, 145, 49, 85, 52, 185, 207, 73, 164];
-            // let k2_be_bytes = vec![0, 0, 0, 23, 131, 89, 146, 104, 82, 75, 202, 174, 197, 236, 203, 236, 132, 40, 21, 111, 127, 206, 193, 117, 0, 204, 135, 146, 245, 215, 20, 198];
-            let x1_be_bytes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 132, 90, 202, 207, 74, 216, 137, 128, 23, 153, 179, 26, 120, 208, 216, 194, 204, 27, 175];
-            let x2_be_bytes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 164, 51, 1, 23, 237, 34, 156, 132, 2, 2, 72, 137, 33, 191, 82, 68, 248, 41, 120];
-            let x3_be_bytes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 40, 246, 226, 135, 148, 92, 64, 221, 255, 102, 55, 129, 127, 112, 201, 119, 28, 125, 180];
+            let k1_be_bytes = vec![0, 0, 0, 43, 52, 84, 176, 75, 70, 122, 59, 238, 90, 152, 55, 97, 148, 25, 71, 127, 67, 98, 248, 218, 190, 136, 214, 182, 47, 48, 167, 1];
+            let k2_be_bytes = vec![0, 0, 0, 89, 114, 117, 208, 3, 249, 12, 114, 129, 55, 155, 32, 198, 179, 51, 74, 131, 206, 34, 109, 103, 90, 135, 236, 251, 190, 106, 233, 253];
+            let x1_be_bytes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 152, 120, 76, 232, 237, 6, 47, 82, 175, 113, 22, 122, 179, 146, 233, 97, 219, 67, 219];
+            let x2_be_bytes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 21, 10, 39, 160, 144, 191, 138, 213, 234, 230, 99, 71, 68, 57, 14, 197, 139, 238, 173];
+            let x3_be_bytes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 37, 14, 188, 252, 244, 161, 199, 207, 181, 64, 226, 222, 43, 143, 181, 210, 199, 178, 168];
             let x1 = BigUint::from_bytes_be(&x1_be_bytes);
             let x2 = BigUint::from_bytes_be(&x2_be_bytes);
             let x3 = BigUint::from_bytes_be(&x3_be_bytes);
+            let k1 = BigUint::from_bytes_be(&k1_be_bytes);
+            let k2 = BigUint::from_bytes_be(&k2_be_bytes);
+
+            let p3_1 = point_scalar_multiplication(&k1, &p1);
+            let p3_2 = point_scalar_multiplication(&k2, &p2);
+            let p3 = point_add(&p3_1, &p3_2);
+
+            let expected_p3_ref: CompressedCurvePointRef = [7, 248, 88, 88, 199, 102, 44, 116, 8, 10, 226, 221, 2, 63, 242, 217, 247, 125, 89, 183, 181, 28, 67, 76, 246, 66, 172, 123, 248, 0];
+            let expected_p3 = CurvePointRef::from_compressed_point(&expected_p3_ref).0;
+            assert_eq!(p3, expected_p3);
 
             // ++++++
             let mut bld = CircuitAdapter::default();
