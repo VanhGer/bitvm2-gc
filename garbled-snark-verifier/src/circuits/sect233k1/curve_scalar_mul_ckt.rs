@@ -1538,22 +1538,22 @@ pub(crate) mod point_scalar_mul {
             let stats = bld.gate_counts();
             println!("{stats}");
 
-            // let wires = bld.eval_gates(&witness);
-            //
-            // println!("validating output");
-            // let ckt_x = out_bits.x.map(|id| wires[id]);
-            // let ckt_s = out_bits.s.map(|id| wires[id]);
-            // let ckt_z = out_bits.z.map(|id| wires[id]);
-            // let ckt_t = out_bits.t.map(|id| wires[id]);
-            //
-            // let ckt_out = InnerPointRef {
-            //     x: bits_to_gfref(&ckt_x),
-            //     s: bits_to_gfref(&ckt_s),
-            //     z: bits_to_gfref(&ckt_z),
-            //     t: bits_to_gfref(&ckt_t),
-            // };
-            //
-            // assert_eq!(ckt_out, expected_output);
+            let wires = bld.eval_gates(&witness);
+
+            println!("validating output");
+            let ckt_x = out_bits.x.map(|id| wires[id]);
+            let ckt_s = out_bits.s.map(|id| wires[id]);
+            let ckt_z = out_bits.z.map(|id| wires[id]);
+            let ckt_t = out_bits.t.map(|id| wires[id]);
+
+            let ckt_out = InnerPointRef {
+                x: bits_to_gfref(&ckt_x),
+                s: bits_to_gfref(&ckt_s),
+                z: bits_to_gfref(&ckt_z),
+                t: bits_to_gfref(&ckt_t),
+            };
+
+            assert_eq!(ckt_out, expected_output);
 
         }
 
