@@ -1158,7 +1158,8 @@ mod precompute_table {
 
         for i in 1..table_size {
             let temp_point = add_2_points_with_selects(bld, bs[i][0], p0, bs[i][1], p1);
-            let res_point = add_2_points_with_selects(bld, 1, &temp_point, bs[i][2], &p2,);
+            let sel_temp = usize::from((bs[i][0] != 0) || (bs[i][1] != 0));
+            let res_point = add_2_points_with_selects(bld, sel_temp, &temp_point, bs[i][2], &p2,);
             table.push(res_point);
         }
         table
@@ -1181,7 +1182,6 @@ mod precompute_table {
             return p0.clone();
         }
         Template::emit_point_add_custom(bld, p0, p1)
-        // emit_point_add(bld, p0, p1)
     }
 
     #[cfg(test)]
@@ -1709,7 +1709,7 @@ pub(crate) mod point_scalar_mul {
 
             let u0_g_labels = emit_mul_windowed_tau(&mut bld, &u0labels, &glabels, window);
             let v0_gk_labels = emit_mul_windowed_tau(&mut bld, &v0labels, &gklabels, window);
-            let res_labels = emit_point_add(&mut bld, &u0_g_labels, &v0_gk_labels);
+            let res_labels = Template::emit_point_add_custom(&mut bld, &u0_g_labels, &v0_gk_labels);
 
             let st = st.elapsed();
             println!("emit_mul_windowed_tau took {} seconds", st.as_secs());
