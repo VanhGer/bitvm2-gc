@@ -1496,15 +1496,6 @@ pub(crate) mod point_scalar_mul {
             let x2witness = frref_to_bits(&x2);
             let x3witness = frref_to_bits(&x3);
 
-            // println!("x1witness {:?}", x1witness);
-            // println!("x2witness {:?}", x2witness);
-            // println!("x3witness {:?}", x3witness);
-            // for i in 155..232 {
-            //     assert_eq!(x1witness[i], false);
-            //     assert_eq!(x2witness[i], false);
-            //     assert_eq!(x3witness[i], false);
-            // }
-
             let p1witness: Vec<bool> = [&p1.x, &p1.s, &p1.z, &p1.t]
                 .iter()
                 .flat_map(|k| {
@@ -1689,6 +1680,17 @@ pub(crate) mod point_scalar_mul {
         // This test just printout the circuit size for tau-adic scalar multiplication
         fn test_tau_adic_sm_circuit_size() {
             let window = 5;
+            let p1 = InnerPointRef::generator();
+            let p2 = InnerPointRef::generator();
+
+            let mut rng = rand::thread_rng();
+            let k1: BigUint = rng.sample(RandomBits::new(231));
+            let k2: BigUint = rng.sample(RandomBits::new(231));
+
+            let out_ref_1 = point_scalar_multiplication(&k1, &p1);
+            let out_ref_2 = point_scalar_multiplication(&k2, &p2);
+            let out_ref = point_add(&out_ref_1, &out_ref_2);
+
             // +++++++++++
             let mut bld = CircuitAdapter::default();
             let u0labels: Fr = bld.fresh();
@@ -1709,6 +1711,35 @@ pub(crate) mod point_scalar_mul {
             println!("emit_mul_windowed_tau took {} seconds", st.as_secs());
             let stats = bld.gate_counts();
             println!("{stats}");
+
+            let mut witness = Vec::<bool>::new();
+            let k1witness = frref_to_bits(&k1);
+            let k2witness = frref_to_bits(&k2);
+            let p1witness: Vec<bool> = [&p1.x, &p1.s, &p1.z, &p1.t]
+                .iter()
+                .flat_map(|k| {
+                    let kb: Vec<bool> = gfref_to_bits(k).to_vec();
+                    kb
+                })
+                .collect();
+            let p2witness: Vec<bool> = [&p2.x, &p2.s, &p2.z, &p2.t]
+                .iter()
+                .flat_map(|k| {
+                    let kb: Vec<bool> = gfref_to_bits(k).to_vec();
+                    kb
+                })
+                .collect();
+            witness.extend_from_slice(&k1witness);
+            witness.extend_from_slice(&k2witness);
+            witness.extend_from_slice(&p1witness);
+            witness.extend_from_slice(&p2witness);
+
+            println!("build circuit");
+            let mut circuit = bld.build(&witness);
+            let start = Instant::now();
+            let total_gates = circuit.gate_counts();
+            println!("gate_counts time: {:?}", start.elapsed());
+            total_gates.print();
         }
     }
 }
