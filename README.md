@@ -5,7 +5,7 @@ verifier**.
 
 Commit Reference
 
-The `garbled-snark-verifier` is modified
+The `garbled-snark-verifier` is originally modified
 from [garbled-snark-verifier:5a2cd4](https://github.com/BitVM/garbled-snark-verifier/commit/5a2cd4dc6cb19e37adb1b3ab94414e01d1e8b338).
 
 To switch between hash functions in the guest program, modify the default feature in `verifiable-circuit/Cargo.toml`:
