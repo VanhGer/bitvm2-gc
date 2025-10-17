@@ -1456,7 +1456,7 @@ pub(crate) mod point_scalar_mul {
 
         use super::*;
         use crate::circuits::sect233k1::builder::{CircuitAdapter, CircuitTrait};
-        use crate::circuits::sect233k1::curve_ckt::{emit_point_add, CompressedCurvePoint, CompressedCurvePointRef};
+        use crate::circuits::sect233k1::curve_ckt::{emit_point_add, AffinePointRef};
         use crate::circuits::sect233k1::curve_ref::{point_add, CurvePointRef as InnerPointRef, CurvePointRef};
         use crate::circuits::sect233k1::curve_ref::point_scalar_multiplication;
         use crate::circuits::sect233k1::fr_ref::frref_to_bits;
@@ -1484,9 +1484,13 @@ pub(crate) mod point_scalar_mul {
             let p3_1 = point_scalar_multiplication(&k1, &p1);
             let p3_2 = point_scalar_multiplication(&k2, &p2);
             let p3 = point_add(&p3_1, &p3_2);
+            
+            let expected_affine_p3 = AffinePointRef {
+                x: [49, 130, 96, 143, 76, 111, 189, 184, 52, 117, 116, 108, 162, 222, 81, 0, 53, 47, 78, 197, 92, 23, 6, 220, 196, 46, 82, 232, 210, 0],
+                s: [25, 243, 15, 62, 12, 136, 153, 145, 134, 170, 208, 152, 195, 214, 194, 10, 214, 182, 82, 182, 245, 167, 62, 85, 93, 11, 199, 7, 33, 1],
+            };
+            let expected_p3 = CurvePointRef::from_affine_point(&expected_affine_p3).0;
 
-            let expected_p3_ref: CompressedCurvePointRef = [7, 248, 88, 88, 199, 102, 44, 116, 8, 10, 226, 221, 2, 63, 242, 217, 247, 125, 89, 183, 181, 28, 67, 76, 246, 66, 172, 123, 248, 0];
-            let expected_p3 = CurvePointRef::from_compressed_point(&expected_p3_ref).0;
             assert_eq!(p3, expected_p3);
 
             // ++++++
@@ -1711,35 +1715,6 @@ pub(crate) mod point_scalar_mul {
             println!("emit_mul_windowed_tau took {} seconds", st.as_secs());
             let stats = bld.gate_counts();
             println!("{stats}");
-
-            let mut witness = Vec::<bool>::new();
-            let k1witness = frref_to_bits(&k1);
-            let k2witness = frref_to_bits(&k2);
-            let p1witness: Vec<bool> = [&p1.x, &p1.s, &p1.z, &p1.t]
-                .iter()
-                .flat_map(|k| {
-                    let kb: Vec<bool> = gfref_to_bits(k).to_vec();
-                    kb
-                })
-                .collect();
-            let p2witness: Vec<bool> = [&p2.x, &p2.s, &p2.z, &p2.t]
-                .iter()
-                .flat_map(|k| {
-                    let kb: Vec<bool> = gfref_to_bits(k).to_vec();
-                    kb
-                })
-                .collect();
-            witness.extend_from_slice(&k1witness);
-            witness.extend_from_slice(&k2witness);
-            witness.extend_from_slice(&p1witness);
-            witness.extend_from_slice(&p2witness);
-
-            println!("build circuit");
-            let mut circuit = bld.build(&witness);
-            let start = Instant::now();
-            let total_gates = circuit.gate_counts();
-            println!("gate_counts time: {:?}", start.elapsed());
-            total_gates.print();
         }
     }
 }
