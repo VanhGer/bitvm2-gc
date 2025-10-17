@@ -4,14 +4,13 @@ use std::str::FromStr;
 
 use super::{
     builder::{CircuitTrait, GateOperation, Template},
-    gf_ckt::{
-        GF_LEN, Gf, emit_gf_add, emit_gf_decode, emit_gf_halftrace, emit_gf_inv, emit_gf_is_zero,
-        emit_gf_square, emit_gf_trace,
-    },
+    gf_ckt::{GF_LEN, Gf, emit_gf_add, emit_gf_equals, emit_gf_square},
     gf_mul_ckt::emit_gf_mul,
 };
 use crate::circuits::sect233k1::builder::{CircuitAdapter, Operation};
+use crate::circuits::sect233k1::dv_ckt::u8_to_bits_le;
 use num_bigint::BigUint;
+use serde::Deserialize;
 
 /// Representation of a point, on the xsk233 curve in projective co-ordinates, as wire labels
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
@@ -22,12 +21,34 @@ pub(crate) struct CurvePoint {
     pub t: Gf,
 }
 
-/// Size of a compressed Curve Point is 30 bytes
-pub(crate) const COMPRESSED_POINT_LEN: usize = 30;
-/// Representation of a compressed Curve Point as wire labels
-pub(crate) type CompressedCurvePoint = [[usize; 8]; COMPRESSED_POINT_LEN];
-/// Representation of a compressed curve point as 30 byte array
-pub(crate) type CompressedCurvePointRef = [u8; COMPRESSED_POINT_LEN];
+/// Representation of a point in Lopez–Dahab affine (λ) coordinates.
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+pub(crate) struct AffinePoint {
+    pub x: Gf,
+    pub s: Gf,
+}
+
+/// Lopez–Dahab λ coordinates (x, λ(=s)) for a curve point over GF(2^233).
+#[derive(Debug, Deserialize)]
+pub struct AffinePointRef {
+    pub x: [u8; 30],
+    pub s: [u8; 30],
+}
+
+impl AffinePointRef {
+    pub fn to_bits(&self) -> Vec<bool> {
+        let mut bits = Vec::with_capacity(GF_LEN * 2);
+
+        // Helper to extract 233 little-endian bits from a 30-byte array.
+        let bytes_to_exact_bits = |bytes: &[u8]| -> Vec<bool> {
+            bytes.iter().flat_map(|&byte| u8_to_bits_le(byte)).take(GF_LEN).collect()
+        };
+
+        bits.extend(bytes_to_exact_bits(&self.x));
+        bits.extend(bytes_to_exact_bits(&self.s));
+        bits
+    }
+}
 
 /// Wire labels representing base field element ZERO
 fn gf_zero<T: CircuitTrait>(b: &mut T) -> Gf {
@@ -176,56 +197,28 @@ pub(crate) fn emit_point_frob<T: CircuitTrait>(bld: &mut T, p1: &CurvePoint) -> 
     CurvePoint { x: p3_x, s: p3_s, z: p3_z, t: p3_t }
 }
 
-/// Decodes a compressed curve point if valid
-// Emits (decoded CurvePoint, validity_bit) where validity_bit is 0 if the input was invalid
-pub(crate) fn emit_xsk233_decode<T: CircuitTrait>(
+/// Converts an affine Lopez–Dahab point to projective representation and validates it.
+/// Verify that (x, s) lies on the curve: s^2 + x*s == x^4 + 1.
+pub(crate) fn emit_affine_point_is_on_curve<T: CircuitTrait>(
     bld: &mut T,
-    src: &CompressedCurvePoint,
+    p: &AffinePoint,
 ) -> (CurvePoint, usize) {
-    let (w, ve) = emit_gf_decode(bld, src);
-    let wz = emit_gf_is_zero(bld, w); //wz = w == 0
-
-    let d = emit_gf_square(bld, &w); // d = w^2 + w
-    let d = emit_gf_add(bld, &d, &w);
-    let d_is_zero = emit_gf_is_zero(bld, d);
-    let one = bld.one();
-    let rp = bld.xor_wire(d_is_zero, one); //rp= d != 0
-
-    let e = emit_gf_square(bld, &d); //e=d^-2
-    let e = emit_gf_inv(bld, e);
-    let etr = emit_gf_trace(bld, &e); // etr = Tr(e)
-    let rp_tr = bld.xor_wire(etr, one);
-    let rp = bld.and_wire(rp, rp_tr);
-
-    let f = emit_gf_halftrace(bld, &e);
-
-    let x = emit_gf_mul(bld, &d, &f);
-    let xtr = emit_gf_trace(bld, &x);
-    let rp_tr = bld.xor_wire(xtr, one);
-    let rp = bld.and_wire(rp, rp_tr);
-
-    let g = emit_gf_halftrace(bld, &x);
-
-    let g = emit_gf_add(bld, &g, &w);
-    let g = emit_gf_mul(bld, &g, &x);
-    let g_tr = emit_gf_trace(bld, &g);
-    let masked_d = {
-        let mut tmp = [0; GF_LEN];
-        for i in 0..GF_LEN {
-            tmp[i] = bld.and_wire(d[i], g_tr);
-        }
-        tmp
+    let one = gf_one(bld);
+    let lhs = {
+        let s_squared = emit_gf_square(bld, &p.s);
+        let s_mul_x = emit_gf_mul(bld, &p.s, &p.x);
+        emit_gf_add(bld, &s_squared, &s_mul_x)
     };
-    let x = emit_gf_add(bld, &x, &masked_d);
+    let rhs = {
+        let x_squared = emit_gf_square(bld, &p.x);
+        let x_fourth = emit_gf_square(bld, &x_squared);
+        emit_gf_add(bld, &x_fourth, &one)
+    };
 
-    let s = emit_gf_square(bld, &w);
-    let s = emit_gf_mul(bld, &s, &x);
+    let is_on_curve = emit_gf_equals(bld, &lhs, &rhs);
+    let projective_p = CurvePoint { x: p.x, s: p.s, z: one, t: p.x };
 
-    // condset
-    let rp_or_wz = bld.or_wire(rp, wz);
-    let success = bld.and_wire(ve, rp_or_wz);
-
-    (CurvePoint { x, s, z: gf_one(bld), t: x }, success)
+    (projective_p, is_on_curve)
 }
 
 // Generate Circuit Configuration for Point Addition
@@ -298,7 +291,7 @@ pub(crate) fn template_emit_point_add() -> Template {
     }
 }
 
-#[cfg(all(test, feature = "verify"))]
+#[cfg(test)]
 mod test {
     use std::{os::raw::c_void, str::FromStr, time::Instant};
 
