@@ -192,7 +192,7 @@ pub(crate) fn emit_neg_point<T: CircuitTrait>(bld: &mut T, p1: &CurvePoint) -> C
     CurvePoint { x: p1.x, s: p2_s, z: p1.z, t: p1.t }
 }
 
-pub(crate) fn emit_neg_point_with_selector<T: CircuitTrait>(
+pub(crate) fn emit_neg_point_with_neg_selector<T: CircuitTrait>(
     bld: &mut T,
     p1: &CurvePoint,
     neg: usize,
@@ -206,6 +206,23 @@ pub(crate) fn emit_neg_point_with_selector<T: CircuitTrait>(
         let d = bld.xor_wire(p1.s[i], neg_s[i]);
         let xd = bld.and_wire(d, neg);
         r.s[i] = bld.xor_wire(p1.s[i], xd);
+    }
+    r
+}
+pub(crate) fn emit_neg_point_with_pos_selector<T: CircuitTrait>(
+    bld: &mut T,
+    p1: &CurvePoint,
+    pos: usize,
+) -> CurvePoint {
+    let mut r = CurvePoint::identity(bld);
+    r.x = p1.x;
+    r.z = p1.z;
+    r.t = p1.t;
+    let neg_s = emit_gf_add(bld, &p1.s, &p1.t);
+    for i in 0..GF_LEN {
+        let d = bld.xor_wire(p1.s[i], neg_s[i]);
+        let xd = bld.and_wire(d, pos);
+        r.s[i] = bld.xor_wire(neg_s[i], xd);
     }
     r
 }
@@ -447,7 +464,7 @@ mod test {
     }
 
     #[test]
-    fn test_negative_point_with_selector() {
+    fn test_negative_point_with_neg_selector() {
         let p1 = InnerPointRef {
             x: BigUint::from_str(
                 "13283792768796718556929275469989697816663440403339868882741001477299174",
@@ -474,7 +491,7 @@ mod test {
         let c_p1 = CurvePoint { x: bld.fresh(), s: bld.fresh(), z: bld.fresh(), t: bld.fresh() };
         let neg = bld.fresh_one();
 
-        let c_neg_p1 = super::emit_neg_point_with_selector(&mut bld, &c_p1, neg);
+        let c_neg_p1 = super::emit_neg_point_with_neg_selector(&mut bld, &c_p1, neg);
         let sum = super::emit_point_add(&mut bld, &c_p1, &c_neg_p1);
 
         println!("number of gates: {:?}", bld.gate_counts());

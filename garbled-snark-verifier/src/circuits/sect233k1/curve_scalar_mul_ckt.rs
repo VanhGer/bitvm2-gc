@@ -1455,7 +1455,7 @@ pub(crate) mod point_scalar_mul {
 
         use super::*;
         use crate::circuits::sect233k1::builder::{CircuitAdapter, CircuitTrait};
-        use crate::circuits::sect233k1::curve_ckt::{emit_neg_point_with_selector, emit_point_add, AffinePointRef};
+        use crate::circuits::sect233k1::curve_ckt::{emit_neg_point_with_neg_selector, emit_neg_point_with_pos_selector, emit_point_add, AffinePointRef};
         use crate::circuits::sect233k1::curve_ref::{point_add, CurvePointRef as InnerPointRef, CurvePointRef};
         use crate::circuits::sect233k1::curve_ref::point_scalar_multiplication;
         use crate::circuits::sect233k1::fr_ref::frref_to_bits;
@@ -1667,7 +1667,7 @@ pub(crate) mod point_scalar_mul {
 
             let x1_neg_w = false;
             let x2_neg_w = true;
-            let x3_neg_w =true;
+            let x3_neg_w = false;
 
             // ++++++
             let mut bld = CircuitAdapter::default();
@@ -1725,9 +1725,10 @@ pub(crate) mod point_scalar_mul {
 
             println!("test_hinted_double_scalar_mul_with_selector");
             let st = Instant::now();
-            let new_p1 = emit_neg_point_with_selector(&mut bld, &p1labels, x1_neg);
-            let new_p2 = emit_neg_point_with_selector(&mut bld, &p2labels, x2_neg);
-            let new_p3 = emit_neg_point_with_selector(&mut bld, &p3labels, x3_neg);
+            let new_p1 = emit_neg_point_with_neg_selector(&mut bld, &p1labels, x1_neg);
+            let new_p2 = emit_neg_point_with_neg_selector(&mut bld, &p2labels, x2_neg);
+            // because we compute ... + (-zQ).
+            let new_p3 = emit_neg_point_with_pos_selector(&mut bld, &p3labels, x3_neg);
             let out_bits = emit_hinted_double_scalar_mul(&mut bld, &x1labels, &new_p1, &x2labels, &new_p2, &x3labels, &new_p3);
             let st = st.elapsed();
             println!("test_hinted_double_scalar_mul_with_selector took {} seconds", st.as_secs());
