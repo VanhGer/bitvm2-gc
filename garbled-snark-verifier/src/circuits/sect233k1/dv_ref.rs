@@ -7,7 +7,7 @@ use super::{
     fr_ref::FrRef,
 };
 use crate::circuits::sect233k1::curve_ckt::AffinePointRef;
-use num_traits::Num;
+use num_traits::{Num, Zero};
 
 pub(crate) fn get_fs_challenge(
     commit_p: &AffinePointRef,
@@ -91,6 +91,7 @@ pub(crate) fn get_fs_challenge(
 // }
 
 const MOD_HEX: &str = "8000000000000000000000000000069d5bb915bcd46efb1ad5f173abdf"; // n
+const TWO_TO_156_HEX: &str = "1000000000000000000000000000000000000000";
 
 fn fr_add(a: &FrRef, b: &FrRef) -> FrRef {
     let n = FrRef::from_str_radix(MOD_HEX, 16).unwrap();
@@ -107,191 +108,232 @@ fn fr_mul(a: &FrRef, b: &FrRef) -> FrRef {
     (a * b) % n
 }
 
-pub(crate) fn verify(
-    proof: ProofRef,
-    public_inputs: PublicInputsRef,
-    secrets: TrapdoorRef,
-) -> bool {
-    let (proof_commit_p, decode_proof_commit_p_success) =
-        CurvePointRef::from_affine_point(&proof.commit_p);
-    let (proof_kzg_k, decode_proof_kzg_k_success) = CurvePointRef::from_affine_point(&proof.kzg_k);
-    let n = FrRef::from_str_radix(MOD_HEX, 16).unwrap();
-    let decode_scalars_success = proof.a0 < n && proof.b0 < n;
-
-    // let public_inputs_1 = get_pub_hash_from_raw_pub_inputs(&raw_public_inputs);
-    // let public_inputs_0_vk_const = FrRef::from_str(ziren_vk).unwrap(); // vk
-
-    let fs_challenge_alpha =
-        get_fs_challenge(&proof.commit_p, &public_inputs.public_inputs, vec![], vec![]);
-
-    let i0 = {
-        let t0 = fr_mul(&public_inputs.public_inputs[1], &fs_challenge_alpha);
-        fr_add(&t0, &public_inputs.public_inputs[0])
-    };
-
-    let r0 = {
-        //&proof.a0 * &proof.b0 - &proof.i0
-        let t0 = fr_mul(&proof.a0, &proof.b0);
-        fr_sub(&t0, &i0)
-    };
-
-    // Step 3. Compute u₀ and v₀
-    let delta2 = fr_mul(&secrets.delta, &secrets.delta);
-    let u0 = {
-        //(&proof.a0 + &secrets.delta * &proof.b0 + &delta2 * &r0) * &secrets.epsilon;
-        let db0 = fr_mul(&secrets.delta, &proof.b0);
-        let a0_p_db0 = fr_add(&proof.a0, &db0);
-        let d2_r0 = fr_mul(&delta2, &r0);
-        let t1 = fr_add(&a0_p_db0, &d2_r0);
-        fr_mul(&t1, &secrets.epsilon)
-    };
-    let v0 = fr_mul(&fr_sub(&secrets.tau, &fs_challenge_alpha), &secrets.epsilon);
-
-    let v0_k = point_scalar_multiplication(&v0, &proof_kzg_k);
-    let u0_g = point_scalar_multiplication(&u0, &CurvePointRef::generator());
-    let lhs = point_add(&v0_k, &u0_g);
-    let rhs: CurvePointRef = proof_commit_p;
-
-    let proof_pass = point_equals(&lhs, &rhs); // matches
-    let decode_pass =
-        decode_proof_commit_p_success & decode_proof_kzg_k_success & decode_scalars_success;
-    proof_pass & decode_pass
-}
-
-#[cfg(test)]
-mod test {
-    use super::super::fr_ref::FrRef;
-    use super::{ProofRef, PublicInputsRef, TrapdoorRef, verify};
-    use crate::circuits::sect233k1::curve_ckt::AffinePointRef;
-    use std::str::FromStr;
-
-    #[test]
-    fn test_verify_over_mock_inputs() {
-        let secrets = {
-            let tau = FrRef::from_str(
-                "490782060457092443021184404188169115419401325819878347174959236155604",
-            )
-            .unwrap();
-            let delta = FrRef::from_str(
-                "409859792668509615016679153954612494269657711226760893245268993658466",
-            )
-            .unwrap();
-            let epsilon = FrRef::from_str(
-                "2880039972651592580549544494658966441531834740391411845954153637005104",
-            )
-            .unwrap();
-            TrapdoorRef { tau, delta, epsilon }
-        };
-
-        let proof = ProofRef {
-            commit_p: AffinePointRef {
-                x: [
-                    130, 16, 132, 245, 115, 118, 110, 233, 235, 58, 5, 190, 187, 230, 138, 225,
-                    149, 231, 32, 45, 41, 29, 94, 89, 248, 158, 54, 19, 86, 0,
-                ],
-                s: [
-                    93, 74, 178, 168, 173, 38, 101, 88, 181, 49, 78, 207, 89, 78, 130, 42, 242,
-                    245, 88, 5, 253, 250, 54, 182, 177, 249, 82, 57, 147, 0,
-                ],
-            },
-            kzg_k: AffinePointRef {
-                x: [
-                    36, 69, 122, 22, 89, 79, 186, 56, 138, 8, 183, 193, 186, 98, 21, 62, 9, 143,
-                    173, 24, 89, 195, 126, 73, 241, 118, 71, 103, 223, 0,
-                ],
-                s: [
-                    12, 122, 106, 168, 104, 248, 117, 18, 171, 218, 85, 138, 31, 80, 250, 230, 176,
-                    136, 74, 129, 137, 78, 181, 48, 88, 180, 21, 139, 39, 1,
-                ],
-            },
-            a0: FrRef::from_str(
-                "1858232303623355521215721639157430371979542022979851183514844283900649",
-            )
-            .unwrap(),
-            b0: FrRef::from_str(
-                "3045644831070136055562137919853497607898653327126781771795842528553732",
-            )
-            .unwrap(),
-        };
-
-        let rpin = PublicInputsRef {
-            public_inputs: [
-                FrRef::from_str(
-                    "9487159538405616582219466419827834782293111327936747259752845028149",
-                )
-                .unwrap(),
-                FrRef::from_str(
-                    "22596372664815072823112258091854569627353949811861389086305200952659",
-                )
-                .unwrap(),
-            ],
-        };
-        let passed = verify(proof, rpin, secrets);
-        assert!(passed);
-    }
-
-    #[test]
-    fn test_invalid_proof_over_mock_inputs() {
-        let secrets = {
-            let tau = FrRef::from_str(
-                "490782060457092443021184404188169115419401325819878347174959236155604",
-            )
-            .unwrap();
-            let delta = FrRef::from_str(
-                "409859792668509615016679153954612494269657711226760893245268993658466",
-            )
-            .unwrap();
-            let epsilon = FrRef::from_str(
-                "1880039972651592580549544494658966441531834740391411845954153637005104",
-            )
-            .unwrap();
-            TrapdoorRef { tau, delta, epsilon }
-        };
-
-        let proof = ProofRef {
-            commit_p: AffinePointRef {
-                x: [
-                    130, 16, 132, 245, 115, 118, 110, 233, 235, 58, 5, 190, 187, 230, 138, 225,
-                    149, 231, 32, 45, 41, 29, 94, 89, 248, 158, 54, 19, 86, 0,
-                ],
-                s: [
-                    93, 74, 178, 168, 173, 38, 101, 88, 181, 49, 78, 207, 89, 78, 130, 42, 242,
-                    245, 88, 5, 253, 250, 54, 182, 177, 249, 82, 57, 147, 0,
-                ],
-            },
-            kzg_k: AffinePointRef {
-                x: [
-                    36, 69, 122, 22, 89, 79, 186, 56, 138, 8, 183, 193, 186, 98, 21, 62, 9, 143,
-                    173, 24, 89, 195, 126, 73, 241, 118, 71, 103, 223, 0,
-                ],
-                s: [
-                    12, 122, 106, 168, 104, 248, 117, 18, 171, 218, 85, 138, 31, 80, 250, 230, 176,
-                    136, 74, 129, 137, 78, 181, 48, 88, 180, 21, 139, 39, 1,
-                ],
-            },
-            a0: FrRef::from_str(
-                "1858232303623355521215721639157430371979542022979851183514844283900649",
-            )
-            .unwrap(),
-            b0: FrRef::from_str(
-                "3045644831070136055562137919853497607898653327126781771795842528553732",
-            )
-            .unwrap(),
-        };
-
-        let rpin = PublicInputsRef {
-            public_inputs: [
-                FrRef::from_str(
-                    "20964902444291521893664765711676021715483874668026528518811070427510",
-                )
-                .unwrap(),
-                FrRef::from_str(
-                    "22596372664815072823112258091854569627353949811861389086305200952659",
-                )
-                .unwrap(),
-            ],
-        };
-        let passed = verify(proof, rpin, secrets);
-        assert!(!passed);
-    }
-}
+// Todo: Uncomment this
+//
+// pub(crate) fn verify(
+//     proof: ProofRef,
+//     public_inputs: PublicInputsRef,
+//     secrets: TrapdoorRef,
+// ) -> bool {
+//     let (proof_commit_p, decode_proof_commit_p_success) =
+//         CurvePointRef::from_affine_point(&proof.commit_p);
+//     let generator = CurvePointRef::generator();
+//     let (proof_kzg_k, decode_proof_kzg_k_success) = CurvePointRef::from_affine_point(&proof.kzg_k);
+//     let n = FrRef::from_str_radix(MOD_HEX, 16).unwrap();
+//     let decode_scalars_success = proof.a0 < n && proof.b0 < n;
+//
+//     // decompose
+//     let two_to_156 = FrRef::from_str_radix(TWO_TO_156_HEX, 16).unwrap();
+//     let decompose_scalars_check = proof.x1.0 < two_to_156
+//         && proof.x2.0 < two_to_156
+//         && proof.z.0 < two_to_156;
+//
+//     // let public_inputs_1 = get_pub_hash_from_raw_pub_inputs(&raw_public_inputs);
+//     // let public_inputs_0_vk_const = FrRef::from_str(ziren_vk).unwrap(); // vk
+//
+//     let fs_challenge_alpha =
+//         get_fs_challenge(&proof.commit_p, &public_inputs.public_inputs, vec![], vec![]);
+//
+//     let i0 = {
+//         let t0 = fr_mul(&public_inputs.public_inputs[1], &fs_challenge_alpha);
+//         fr_add(&t0, &public_inputs.public_inputs[0])
+//     };
+//
+//     let r0 = {
+//         //&proof.a0 * &proof.b0 - &proof.i0
+//         let t0 = fr_mul(&proof.a0, &proof.b0);
+//         fr_sub(&t0, &i0)
+//     };
+//
+//     // Step 3. Compute u₀ and v₀
+//     let delta2 = fr_mul(&secrets.delta, &secrets.delta);
+//     let u0 = {
+//         //(&proof.a0 + &secrets.delta * &proof.b0 + &delta2 * &r0) * &secrets.epsilon;
+//         let db0 = fr_mul(&secrets.delta, &proof.b0);
+//         let a0_p_db0 = fr_add(&proof.a0, &db0);
+//         let d2_r0 = fr_mul(&delta2, &r0);
+//         let t1 = fr_add(&a0_p_db0, &d2_r0);
+//         fr_mul(&t1, &secrets.epsilon)
+//     };
+//     let v0 = fr_mul(&fr_sub(&secrets.tau, &fs_challenge_alpha), &secrets.epsilon);
+//     let fr_zero = FrRef::ZERO;
+//
+//     // check x1, x2, z to u0, v0
+//     // u0 = x1/z mod r,  v0 = x2/z mod r
+//     let new_x1 = if proof.x1.1 {
+//         fr_sub(&fr_zero, &proof.x1.0)
+//     } else {
+//         proof.x1.0.clone()
+//     };
+//     let new_x2 = if proof.x2.1 {
+//         fr_sub(&fr_zero, &proof.x2.0)
+//     } else {
+//         proof.x2.0.clone()
+//     };
+//     let new_z = if proof.z.1 {
+//         fr_sub(&fr_zero, &proof.z.0)
+//     } else {
+//         proof.z.0.clone()
+//     };
+//
+//     let k1z = fr_mul(&u0, &new_z);
+//     let k2z = fr_mul(&v0, &new_z);
+//     let diff1 = fr_sub(&k1z, &new_x1);
+//     let diff2 = fr_sub(&k2z, &new_x2);
+//     let check_diff1 = diff1.is_zero();
+//     let check_diff2 = diff2.is_zero();
+//
+//
+//     // check the validation of hinted double scalar multiplication
+//     // u0 * G + v0 * KZG_K == COMMIT_P
+//     // <=> x1G + x2KZG_K + (-zP) = 0
+//     let new_p1 = neg
+//
+//     // let v0_k = point_scalar_multiplication(&v0, &proof_kzg_k);
+//     // let u0_g = point_scalar_multiplication(&u0, &CurvePointRef::generator());
+//     // let lhs = point_add(&v0_k, &u0_g);
+//     // let rhs: CurvePointRef = proof_commit_p;
+//     //
+//     // let proof_pass = point_equals(&lhs, &rhs); // matches
+//     // let decode_pass =
+//     //     decode_proof_commit_p_success & decode_proof_kzg_k_success & decode_scalars_success;
+//     // proof_pass & decode_pass
+// }
+//
+// #[cfg(test)]
+// mod test {
+//     use super::super::fr_ref::FrRef;
+//     use super::{ProofRef, PublicInputsRef, TrapdoorRef, verify};
+//     use crate::circuits::sect233k1::curve_ckt::AffinePointRef;
+//     use std::str::FromStr;
+//
+//     #[test]
+//     fn test_verify_over_mock_inputs() {
+//         let secrets = {
+//             let tau = FrRef::from_str(
+//                 "490782060457092443021184404188169115419401325819878347174959236155604",
+//             )
+//             .unwrap();
+//             let delta = FrRef::from_str(
+//                 "409859792668509615016679153954612494269657711226760893245268993658466",
+//             )
+//             .unwrap();
+//             let epsilon = FrRef::from_str(
+//                 "2880039972651592580549544494658966441531834740391411845954153637005104",
+//             )
+//             .unwrap();
+//             TrapdoorRef { tau, delta, epsilon }
+//         };
+//
+//         let proof = ProofRef {
+//             commit_p: AffinePointRef {
+//                 x: [
+//                     130, 16, 132, 245, 115, 118, 110, 233, 235, 58, 5, 190, 187, 230, 138, 225,
+//                     149, 231, 32, 45, 41, 29, 94, 89, 248, 158, 54, 19, 86, 0,
+//                 ],
+//                 s: [
+//                     93, 74, 178, 168, 173, 38, 101, 88, 181, 49, 78, 207, 89, 78, 130, 42, 242,
+//                     245, 88, 5, 253, 250, 54, 182, 177, 249, 82, 57, 147, 0,
+//                 ],
+//             },
+//             kzg_k: AffinePointRef {
+//                 x: [
+//                     36, 69, 122, 22, 89, 79, 186, 56, 138, 8, 183, 193, 186, 98, 21, 62, 9, 143,
+//                     173, 24, 89, 195, 126, 73, 241, 118, 71, 103, 223, 0,
+//                 ],
+//                 s: [
+//                     12, 122, 106, 168, 104, 248, 117, 18, 171, 218, 85, 138, 31, 80, 250, 230, 176,
+//                     136, 74, 129, 137, 78, 181, 48, 88, 180, 21, 139, 39, 1,
+//                 ],
+//             },
+//             a0: FrRef::from_str(
+//                 "1858232303623355521215721639157430371979542022979851183514844283900649",
+//             )
+//             .unwrap(),
+//             b0: FrRef::from_str(
+//                 "3045644831070136055562137919853497607898653327126781771795842528553732",
+//             )
+//             .unwrap(),
+//         };
+//
+//         let rpin = PublicInputsRef {
+//             public_inputs: [
+//                 FrRef::from_str(
+//                     "9487159538405616582219466419827834782293111327936747259752845028149",
+//                 )
+//                 .unwrap(),
+//                 FrRef::from_str(
+//                     "22596372664815072823112258091854569627353949811861389086305200952659",
+//                 )
+//                 .unwrap(),
+//             ],
+//         };
+//         let passed = verify(proof, rpin, secrets);
+//         assert!(passed);
+//     }
+//
+//     #[test]
+//     fn test_invalid_proof_over_mock_inputs() {
+//         let secrets = {
+//             let tau = FrRef::from_str(
+//                 "490782060457092443021184404188169115419401325819878347174959236155604",
+//             )
+//             .unwrap();
+//             let delta = FrRef::from_str(
+//                 "409859792668509615016679153954612494269657711226760893245268993658466",
+//             )
+//             .unwrap();
+//             let epsilon = FrRef::from_str(
+//                 "1880039972651592580549544494658966441531834740391411845954153637005104",
+//             )
+//             .unwrap();
+//             TrapdoorRef { tau, delta, epsilon }
+//         };
+//
+//         let proof = ProofRef {
+//             commit_p: AffinePointRef {
+//                 x: [
+//                     130, 16, 132, 245, 115, 118, 110, 233, 235, 58, 5, 190, 187, 230, 138, 225,
+//                     149, 231, 32, 45, 41, 29, 94, 89, 248, 158, 54, 19, 86, 0,
+//                 ],
+//                 s: [
+//                     93, 74, 178, 168, 173, 38, 101, 88, 181, 49, 78, 207, 89, 78, 130, 42, 242,
+//                     245, 88, 5, 253, 250, 54, 182, 177, 249, 82, 57, 147, 0,
+//                 ],
+//             },
+//             kzg_k: AffinePointRef {
+//                 x: [
+//                     36, 69, 122, 22, 89, 79, 186, 56, 138, 8, 183, 193, 186, 98, 21, 62, 9, 143,
+//                     173, 24, 89, 195, 126, 73, 241, 118, 71, 103, 223, 0,
+//                 ],
+//                 s: [
+//                     12, 122, 106, 168, 104, 248, 117, 18, 171, 218, 85, 138, 31, 80, 250, 230, 176,
+//                     136, 74, 129, 137, 78, 181, 48, 88, 180, 21, 139, 39, 1,
+//                 ],
+//             },
+//             a0: FrRef::from_str(
+//                 "1858232303623355521215721639157430371979542022979851183514844283900649",
+//             )
+//             .unwrap(),
+//             b0: FrRef::from_str(
+//                 "3045644831070136055562137919853497607898653327126781771795842528553732",
+//             )
+//             .unwrap(),
+//         };
+//
+//         let rpin = PublicInputsRef {
+//             public_inputs: [
+//                 FrRef::from_str(
+//                     "20964902444291521893664765711676021715483874668026528518811070427510",
+//                 )
+//                 .unwrap(),
+//                 FrRef::from_str(
+//                     "22596372664815072823112258091854569627353949811861389086305200952659",
+//                 )
+//                 .unwrap(),
+//             ],
+//         };
+//         let passed = verify(proof, rpin, secrets);
+//         assert!(!passed);
+//     }
+// }

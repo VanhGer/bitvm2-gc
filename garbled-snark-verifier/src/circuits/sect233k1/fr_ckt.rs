@@ -341,6 +341,12 @@ pub(crate) fn const_mod_n<T: CircuitTrait>(b: &mut T) -> Vec<usize> {
     out
 }
 
+// little-endian bit vector of the 2^156
+pub(crate) fn two_to_156<T: CircuitTrait>(b: &mut T) -> Vec<usize> {
+    let mut out = vec![b.zero(); FR_LEN];
+    out[156] = b.one();
+    out
+}
 pub(crate) fn emit_reduce_pseudo_mersenne<T: CircuitTrait>(
     b: &mut T,
     prod: &[usize],

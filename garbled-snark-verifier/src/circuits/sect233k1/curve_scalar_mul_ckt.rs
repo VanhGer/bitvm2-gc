@@ -1549,7 +1549,7 @@ pub(crate) mod hinted_double_scalar_mul {
         use num_bigint::BigUint;
         use crate::circuits::sect233k1::builder::{CircuitAdapter, CircuitTrait};
         use crate::circuits::sect233k1::curve_ckt::{emit_neg_point_with_neg_selector, emit_neg_point_with_pos_selector, CurvePoint};
-        use crate::circuits::sect233k1::curve_ref::{point_add, point_scalar_multiplication};
+        use crate::circuits::sect233k1::curve_ref::{point_add, point_scalar_multiplication, CurvePointRef};
         use crate::circuits::sect233k1::curve_scalar_mul_ckt::hinted_double_scalar_mul::emit_hinted_double_scalar_mul;
         use crate::circuits::sect233k1::fr_ckt::Fr;
         use crate::circuits::sect233k1::fr_ref::frref_to_bits;
@@ -1558,9 +1558,9 @@ pub(crate) mod hinted_double_scalar_mul {
         // Todo: add ignore
         #[test]
         fn test_hinted_double_scalar_mul_with_selector() {
-            let p1 = crate::circuits::sect233k1::curve_ref::CurvePointRef::generator();
-            let p2 = crate::circuits::sect233k1::curve_ref::CurvePointRef::generator();
-            let expected_output = crate::circuits::sect233k1::curve_ref::CurvePointRef::identity(); // = 0
+            let p1 = CurvePointRef::generator();
+            let p2 = CurvePointRef::generator();
+            let expected_output = CurvePointRef::identity(); // = 0
 
             let k1_be_bytes = vec![0, 0, 0, 51, 96, 176, 10, 90, 39, 174, 104, 4, 29, 148, 187, 28, 109, 98, 171, 127, 230, 48, 143, 66, 84, 143, 149, 177, 187, 210, 141, 20];
             let k2_be_bytes = vec![0, 0, 0, 26, 108, 65, 9, 244, 48, 225, 36, 47, 208, 219, 69, 144, 176, 74, 146, 191, 44, 28, 58, 190, 137, 175, 120, 202, 225, 15, 139, 63];
@@ -1656,7 +1656,7 @@ pub(crate) mod hinted_double_scalar_mul {
             let ckt_z = out_bits.z.map(|id| wires[id]);
             let ckt_t = out_bits.t.map(|id| wires[id]);
 
-            let ckt_out = crate::circuits::sect233k1::curve_ref::CurvePointRef {
+            let ckt_out = CurvePointRef {
                 x: bits_to_gfref(&ckt_x),
                 s: bits_to_gfref(&ckt_s),
                 z: bits_to_gfref(&ckt_z),
