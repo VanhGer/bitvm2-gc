@@ -1421,7 +1421,7 @@ pub(crate) mod point_scalar_mul {
     }
 
     // Compute [x1]P1 + x2[P2] + x3[P3].
-    pub(crate) fn emit_triple_scalar_multiplication<T: CircuitTrait>(
+    pub(crate) fn emit_hinted_double_scalar_mul<T: CircuitTrait>(
         bld: &mut T,
         k1: &Fr,
         p1: &CurvePoint,
@@ -1448,7 +1448,6 @@ pub(crate) mod point_scalar_mul {
 
     #[cfg(test)]
     mod test {
-        use std::thread::sleep;
         use std::time::Instant;
 
         use num_bigint::{BigUint, RandomBits};
@@ -1456,7 +1455,7 @@ pub(crate) mod point_scalar_mul {
 
         use super::*;
         use crate::circuits::sect233k1::builder::{CircuitAdapter, CircuitTrait};
-        use crate::circuits::sect233k1::curve_ckt::{emit_point_add, AffinePointRef};
+        use crate::circuits::sect233k1::curve_ckt::{emit_neg_point_with_selector, emit_point_add, AffinePointRef};
         use crate::circuits::sect233k1::curve_ref::{point_add, CurvePointRef as InnerPointRef, CurvePointRef};
         use crate::circuits::sect233k1::curve_ref::point_scalar_multiplication;
         use crate::circuits::sect233k1::fr_ref::frref_to_bits;
@@ -1484,7 +1483,7 @@ pub(crate) mod point_scalar_mul {
             let p3_1 = point_scalar_multiplication(&k1, &p1);
             let p3_2 = point_scalar_multiplication(&k2, &p2);
             let p3 = point_add(&p3_1, &p3_2);
-            
+
             let expected_affine_p3 = AffinePointRef {
                 x: [49, 130, 96, 143, 76, 111, 189, 184, 52, 117, 116, 108, 162, 222, 81, 0, 53, 47, 78, 197, 92, 23, 6, 220, 196, 46, 82, 232, 210, 0],
                 s: [25, 243, 15, 62, 12, 136, 153, 145, 134, 170, 208, 152, 195, 214, 194, 10, 214, 182, 82, 182, 245, 167, 62, 85, 93, 11, 199, 7, 33, 1],
@@ -1541,13 +1540,11 @@ pub(crate) mod point_scalar_mul {
             witness.extend_from_slice(&p2witness);
             witness.extend_from_slice(&p3witness);
 
-            println!("emit_triple_scalar_multiplication");
+            println!("emit_hinted_double_scalar_mul");
             let st = Instant::now();
-            let out_bits = emit_triple_scalar_multiplication(&mut bld, &x1labels, &p1labels, &x2labels, &p2labels, &x3labels, &p3labels);
+            let out_bits = emit_hinted_double_scalar_mul(&mut bld, &x1labels, &p1labels, &x2labels, &p2labels, &x3labels, &p3labels);
             let st = st.elapsed();
-            println!("emit_triple_scalar_multiplication took {} seconds", st.as_secs());
-
-            // bld.write_bristol_periodic("psm4.bristol").unwrap(); // uncomment if you want to dump to bristol file
+            println!("emit_hinted_double_scalar_mul took {} seconds", st.as_secs());
 
             let stats = bld.gate_counts();
             println!("{stats}");
@@ -1568,14 +1565,6 @@ pub(crate) mod point_scalar_mul {
             };
 
             assert_eq!(ckt_out, expected_output);
-
-            // build circuit
-            println!("build circuit");
-            let mut circuit = bld.build(&witness);
-            let start = Instant::now();
-            let total_gates = circuit.gate_counts();
-            println!("gate_counts time: {:?}", start.elapsed());
-            total_gates.print();
         }
 
         // ignore because of long running test
@@ -1654,15 +1643,69 @@ pub(crate) mod point_scalar_mul {
             assert_eq!(ckt_out, out_ref);
         }
 
-        // Todo: remove after finish decompose msm
+        // Todo: add ignore
         #[test]
-        // This test just printout the circuit size for triple scalar multiplication
-        fn test_decompose_circuit_size() {
+        fn test_hinted_double_scalar_mul_with_selector() {
+            let p1 = InnerPointRef::generator();
+            let p2 = InnerPointRef::generator();
+            let expected_output = InnerPointRef::identity(); // = 0
+
+            let k1_be_bytes = vec![0, 0, 0, 51, 96, 176, 10, 90, 39, 174, 104, 4, 29, 148, 187, 28, 109, 98, 171, 127, 230, 48, 143, 66, 84, 143, 149, 177, 187, 210, 141, 20];
+            let k2_be_bytes = vec![0, 0, 0, 26, 108, 65, 9, 244, 48, 225, 36, 47, 208, 219, 69, 144, 176, 74, 146, 191, 44, 28, 58, 190, 137, 175, 120, 202, 225, 15, 139, 63];
+            let x1_be_bytes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 131, 96, 158, 213, 110, 156, 186, 202, 3, 203, 165, 199, 221, 172, 156, 232, 214, 228, 39];
+            let x2_be_bytes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 174, 223, 194, 147, 141, 52, 233, 166, 56, 189, 163, 209, 209, 141, 210, 79, 165, 145, 131];
+            let x3_be_bytes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 100, 192, 131, 198, 143, 204, 6, 70, 212, 104, 61, 59, 3, 251, 190, 41, 255, 150, 205];
+            let x1 = BigUint::from_bytes_be(&x1_be_bytes);
+            let x2 = BigUint::from_bytes_be(&x2_be_bytes);
+            let x3 = BigUint::from_bytes_be(&x3_be_bytes);
+            let k1 = BigUint::from_bytes_be(&k1_be_bytes);
+            let k2 = BigUint::from_bytes_be(&k2_be_bytes);
+
+            let p3_1 = point_scalar_multiplication(&k1, &p1);
+            let p3_2 = point_scalar_multiplication(&k2, &p2);
+            let p3 = point_add(&p3_1, &p3_2);
+
+            let x1_neg_w = false;
+            let x2_neg_w = true;
+            let x3_neg_w =true;
+
             // ++++++
             let mut bld = CircuitAdapter::default();
+            let mut witness = Vec::<bool>::new();
+            let x1witness = frref_to_bits(&x1);
+            let x2witness = frref_to_bits(&x2);
+            let x3witness = frref_to_bits(&x3);
+
+            let p1witness: Vec<bool> = [&p1.x, &p1.s, &p1.z, &p1.t]
+                .iter()
+                .flat_map(|k| {
+                    let kb: Vec<bool> = gfref_to_bits(k).to_vec();
+                    kb
+                })
+                .collect();
+
+            let p2witness: Vec<bool> = [&p2.x, &p2.s, &p2.z, &p2.t]
+                .iter()
+                .flat_map(|k| {
+                    let kb: Vec<bool> = gfref_to_bits(k).to_vec();
+                    kb
+                })
+                .collect();
+
+            let p3witness: Vec<bool> = [&p3.x, &p3.s, &p3.z, &p3.t]
+                .iter()
+                .flat_map(|k| {
+                    let kb: Vec<bool> = gfref_to_bits(k).to_vec();
+                    kb
+                })
+                .collect();
+
             let x1labels: Fr = bld.fresh();
+            let x1_neg = bld.fresh_one();
             let x2labels: Fr = bld.fresh();
+            let x2_neg = bld.fresh_one();
             let x3labels: Fr = bld.fresh();
+            let x3_neg = bld.fresh_one();
             let p1labels: CurvePoint =
                 CurvePoint { x: bld.fresh(), s: bld.fresh(), z: bld.fresh(), t: bld.fresh() };
             let p2labels: CurvePoint =
@@ -1670,51 +1713,44 @@ pub(crate) mod point_scalar_mul {
             let p3labels: CurvePoint =
                 CurvePoint { x: bld.fresh(), s: bld.fresh(), z: bld.fresh(), t: bld.fresh() };
 
-            println!("emit_triple_scalar_multiplication");
+            witness.extend_from_slice(&x1witness);
+            witness.push(x1_neg_w);
+            witness.extend_from_slice(&x2witness);
+            witness.push(x2_neg_w);
+            witness.extend_from_slice(&x3witness);
+            witness.push(x3_neg_w);
+            witness.extend_from_slice(&p1witness);
+            witness.extend_from_slice(&p2witness);
+            witness.extend_from_slice(&p3witness);
+
+            println!("test_hinted_double_scalar_mul_with_selector");
             let st = Instant::now();
-            let out_bits = emit_triple_scalar_multiplication(&mut bld, &x1labels, &p1labels, &x2labels, &p2labels, &x3labels, &p3labels);
+            let new_p1 = emit_neg_point_with_selector(&mut bld, &p1labels, x1_neg);
+            let new_p2 = emit_neg_point_with_selector(&mut bld, &p2labels, x2_neg);
+            let new_p3 = emit_neg_point_with_selector(&mut bld, &p3labels, x3_neg);
+            let out_bits = emit_hinted_double_scalar_mul(&mut bld, &x1labels, &new_p1, &x2labels, &new_p2, &x3labels, &new_p3);
             let st = st.elapsed();
-            println!("emit_triple_scalar_multiplication took {} seconds", st.as_secs());
+            println!("test_hinted_double_scalar_mul_with_selector took {} seconds", st.as_secs());
+
             let stats = bld.gate_counts();
             println!("{stats}");
-        }
 
-        // Todo: remove after finish decompose msm
-        #[test]
-        // This test just printout the circuit size for tau-adic scalar multiplication
-        fn test_tau_adic_sm_circuit_size() {
-            let window = 5;
-            let p1 = InnerPointRef::generator();
-            let p2 = InnerPointRef::generator();
+            let wires = bld.eval_gates(&witness);
 
-            let mut rng = rand::thread_rng();
-            let k1: BigUint = rng.sample(RandomBits::new(231));
-            let k2: BigUint = rng.sample(RandomBits::new(231));
+            println!("validating output");
+            let ckt_x = out_bits.x.map(|id| wires[id]);
+            let ckt_s = out_bits.s.map(|id| wires[id]);
+            let ckt_z = out_bits.z.map(|id| wires[id]);
+            let ckt_t = out_bits.t.map(|id| wires[id]);
 
-            let out_ref_1 = point_scalar_multiplication(&k1, &p1);
-            let out_ref_2 = point_scalar_multiplication(&k2, &p2);
-            let out_ref = point_add(&out_ref_1, &out_ref_2);
+            let ckt_out = InnerPointRef {
+                x: bits_to_gfref(&ckt_x),
+                s: bits_to_gfref(&ckt_s),
+                z: bits_to_gfref(&ckt_z),
+                t: bits_to_gfref(&ckt_t),
+            };
 
-            // +++++++++++
-            let mut bld = CircuitAdapter::default();
-            let u0labels: Fr = bld.fresh();
-            let v0labels: Fr = bld.fresh();
-            let glabels: CurvePoint =
-                CurvePoint { x: bld.fresh(), s: bld.fresh(), z: bld.fresh(), t: bld.fresh() };
-            let gklabels: CurvePoint =
-                CurvePoint { x: bld.fresh(), s: bld.fresh(), z: bld.fresh(), t: bld.fresh() };
-
-            println!("emit_mul_windowed_tau");
-            let st = Instant::now();
-
-            let u0_g_labels = emit_mul_windowed_tau(&mut bld, &u0labels, &glabels, window);
-            let v0_gk_labels = emit_mul_windowed_tau(&mut bld, &v0labels, &gklabels, window);
-            let res_labels = Template::emit_point_add_custom(&mut bld, &u0_g_labels, &v0_gk_labels);
-
-            let st = st.elapsed();
-            println!("emit_mul_windowed_tau took {} seconds", st.as_secs());
-            let stats = bld.gate_counts();
-            println!("{stats}");
+            assert_eq!(ckt_out, expected_output);
         }
     }
 }
