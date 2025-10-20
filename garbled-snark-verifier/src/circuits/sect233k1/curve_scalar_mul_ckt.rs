@@ -1132,58 +1132,6 @@ mod precompute_table {
         table
     }
 
-    // generate precompute table for decompose triple scalar multiplication
-    pub(crate) fn emit_precompute_d3_table<T: CircuitTrait>(
-        bld: &mut T,
-        p0: &CurvePoint,
-        p1: &CurvePoint,
-        p2: &CurvePoint,
-    ) -> Vec<CurvePoint> {
-        let bs = vec![
-            [0, 0, 0],
-            [1, 0, 0],
-            [0, 1, 0],
-            [1, 1, 0],
-            [0, 0, 1],
-            [1, 0, 1],
-            [0, 1, 1],
-            [1, 1, 1],
-        ];
-
-        let table_size = bs.len();
-        let iden = CurvePoint::identity(bld);
-
-        let mut table = Vec::with_capacity(table_size);
-        table.push(iden);
-
-        for i in 1..table_size {
-            let temp_point = add_2_points_with_selects(bld, bs[i][0], p0, bs[i][1], p1);
-            let sel_temp = usize::from((bs[i][0] != 0) || (bs[i][1] != 0));
-            let res_point = add_2_points_with_selects(bld, sel_temp, &temp_point, bs[i][2], &p2,);
-            table.push(res_point);
-        }
-        table
-    }
-
-    fn add_2_points_with_selects<T: CircuitTrait>(
-        bld: &mut T,
-        select0: usize,
-        p0: &CurvePoint,
-        select1: usize,
-        p1: &CurvePoint,
-    ) -> CurvePoint {
-        if select0 == 0 && select1 == 0 {
-            return CurvePoint::identity(bld);
-        }
-        if select0 == 0 {
-            return p1.clone();
-        }
-        if select1 == 0 {
-            return p0.clone();
-        }
-        Template::emit_point_add_custom(bld, p0, p1)
-    }
-
     #[cfg(test)]
     mod test {
         use std::time::Instant;
@@ -1379,7 +1327,6 @@ mod precompute_table {
 /// Windowed tau-adic point scalar multiplication
 // TODO: Use PRTNAF for lower gate counts
 pub(crate) mod point_scalar_mul {
-    use crate::circuits::sect233k1::curve_scalar_mul_ckt::precompute_table::emit_precompute_d3_table;
     use super::super::{
         builder::{CircuitTrait, Template},
         curve_ckt::{CurvePoint, emit_point_frob},
@@ -1420,32 +1367,6 @@ pub(crate) mod point_scalar_mul {
         r
     }
 
-    // Compute [x1]P1 + x2[P2] + x3[P3].
-    pub(crate) fn emit_hinted_double_scalar_mul<T: CircuitTrait>(
-        bld: &mut T,
-        k1: &Fr,
-        p1: &CurvePoint,
-        k2: &Fr,
-        p2: &CurvePoint,
-        k3: &Fr,
-        p3: &CurvePoint,
-    ) -> CurvePoint {
-        // precompute table for 3 points
-        let table = emit_precompute_d3_table(bld, p1, p2, p3);
-
-        let mut r = CurvePoint::identity(bld);
-        //Todo: set 155 as Global variable
-        for i in 0..155 {
-            r = Template::emit_point_add_custom(bld, &r, &r); // r = r * 2
-            // get the msb i-th bit of k1, k2, k3
-            // expected that k1, k2, k3 <= 2^155 after decomposition
-            let lidx = vec![k1[154 - i], k2[154 - i], k3[154 - i]];
-            let t_i = emit_lookup(bld, &table, lidx);
-            r = Template::emit_point_add_custom(bld, &r, &t_i);
-        }
-        r
-    }
-
     #[cfg(test)]
     mod test {
         use std::time::Instant;
@@ -1455,117 +1376,10 @@ pub(crate) mod point_scalar_mul {
 
         use super::*;
         use crate::circuits::sect233k1::builder::{CircuitAdapter, CircuitTrait};
-        use crate::circuits::sect233k1::curve_ckt::{emit_neg_point_with_neg_selector, emit_neg_point_with_pos_selector, emit_point_add, AffinePointRef};
-        use crate::circuits::sect233k1::curve_ref::{point_add, CurvePointRef as InnerPointRef, CurvePointRef};
+        use crate::circuits::sect233k1::curve_ref::CurvePointRef as InnerPointRef;
         use crate::circuits::sect233k1::curve_ref::point_scalar_multiplication;
         use crate::circuits::sect233k1::fr_ref::frref_to_bits;
         use crate::circuits::sect233k1::gf_ref::{bits_to_gfref, gfref_to_bits};
-
-
-        #[test]
-        // #[ignore]
-        fn test_decompose_msm() {
-            let p1 = InnerPointRef::generator();
-            let p2 = InnerPointRef::generator();
-            let expected_output = InnerPointRef::identity(); // = 0
-
-            let k1_be_bytes = vec![0, 0, 0, 43, 52, 84, 176, 75, 70, 122, 59, 238, 90, 152, 55, 97, 148, 25, 71, 127, 67, 98, 248, 218, 190, 136, 214, 182, 47, 48, 167, 1];
-            let k2_be_bytes = vec![0, 0, 0, 89, 114, 117, 208, 3, 249, 12, 114, 129, 55, 155, 32, 198, 179, 51, 74, 131, 206, 34, 109, 103, 90, 135, 236, 251, 190, 106, 233, 253];
-            let x1_be_bytes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 152, 120, 76, 232, 237, 6, 47, 82, 175, 113, 22, 122, 179, 146, 233, 97, 219, 67, 219];
-            let x2_be_bytes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 21, 10, 39, 160, 144, 191, 138, 213, 234, 230, 99, 71, 68, 57, 14, 197, 139, 238, 173];
-            let x3_be_bytes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 37, 14, 188, 252, 244, 161, 199, 207, 181, 64, 226, 222, 43, 143, 181, 210, 199, 178, 168];
-            let x1 = BigUint::from_bytes_be(&x1_be_bytes);
-            let x2 = BigUint::from_bytes_be(&x2_be_bytes);
-            let x3 = BigUint::from_bytes_be(&x3_be_bytes);
-            let k1 = BigUint::from_bytes_be(&k1_be_bytes);
-            let k2 = BigUint::from_bytes_be(&k2_be_bytes);
-
-            let p3_1 = point_scalar_multiplication(&k1, &p1);
-            let p3_2 = point_scalar_multiplication(&k2, &p2);
-            let p3 = point_add(&p3_1, &p3_2);
-
-            let expected_affine_p3 = AffinePointRef {
-                x: [49, 130, 96, 143, 76, 111, 189, 184, 52, 117, 116, 108, 162, 222, 81, 0, 53, 47, 78, 197, 92, 23, 6, 220, 196, 46, 82, 232, 210, 0],
-                s: [25, 243, 15, 62, 12, 136, 153, 145, 134, 170, 208, 152, 195, 214, 194, 10, 214, 182, 82, 182, 245, 167, 62, 85, 93, 11, 199, 7, 33, 1],
-            };
-            let expected_p3 = CurvePointRef::from_affine_point(&expected_affine_p3).0;
-
-            assert_eq!(p3, expected_p3);
-
-            // ++++++
-            let mut bld = CircuitAdapter::default();
-            let mut witness = Vec::<bool>::new();
-            let x1witness = frref_to_bits(&x1);
-            let x2witness = frref_to_bits(&x2);
-            let x3witness = frref_to_bits(&x3);
-
-            let p1witness: Vec<bool> = [&p1.x, &p1.s, &p1.z, &p1.t]
-                .iter()
-                .flat_map(|k| {
-                    let kb: Vec<bool> = gfref_to_bits(k).to_vec();
-                    kb
-                })
-                .collect();
-
-            let p2witness: Vec<bool> = [&p2.x, &p2.s, &p2.z, &p2.t]
-                .iter()
-                .flat_map(|k| {
-                    let kb: Vec<bool> = gfref_to_bits(k).to_vec();
-                    kb
-                })
-                .collect();
-
-            let p3witness: Vec<bool> = [&p3.x, &p3.s, &p3.z, &p3.t]
-                .iter()
-                .flat_map(|k| {
-                    let kb: Vec<bool> = gfref_to_bits(k).to_vec();
-                    kb
-                })
-                .collect();
-
-            let x1labels: Fr = bld.fresh();
-            let x2labels: Fr = bld.fresh();
-            let x3labels: Fr = bld.fresh();
-            let p1labels: CurvePoint =
-                CurvePoint { x: bld.fresh(), s: bld.fresh(), z: bld.fresh(), t: bld.fresh() };
-            let p2labels: CurvePoint =
-                CurvePoint { x: bld.fresh(), s: bld.fresh(), z: bld.fresh(), t: bld.fresh() };
-            let p3labels: CurvePoint =
-                CurvePoint { x: bld.fresh(), s: bld.fresh(), z: bld.fresh(), t: bld.fresh() };
-
-            witness.extend_from_slice(&x1witness);
-            witness.extend_from_slice(&x2witness);
-            witness.extend_from_slice(&x3witness);
-            witness.extend_from_slice(&p1witness);
-            witness.extend_from_slice(&p2witness);
-            witness.extend_from_slice(&p3witness);
-
-            println!("emit_hinted_double_scalar_mul");
-            let st = Instant::now();
-            let out_bits = emit_hinted_double_scalar_mul(&mut bld, &x1labels, &p1labels, &x2labels, &p2labels, &x3labels, &p3labels);
-            let st = st.elapsed();
-            println!("emit_hinted_double_scalar_mul took {} seconds", st.as_secs());
-
-            let stats = bld.gate_counts();
-            println!("{stats}");
-
-            let wires = bld.eval_gates(&witness);
-
-            println!("validating output");
-            let ckt_x = out_bits.x.map(|id| wires[id]);
-            let ckt_s = out_bits.s.map(|id| wires[id]);
-            let ckt_z = out_bits.z.map(|id| wires[id]);
-            let ckt_t = out_bits.t.map(|id| wires[id]);
-
-            let ckt_out = InnerPointRef {
-                x: bits_to_gfref(&ckt_x),
-                s: bits_to_gfref(&ckt_s),
-                z: bits_to_gfref(&ckt_z),
-                t: bits_to_gfref(&ckt_t),
-            };
-
-            assert_eq!(ckt_out, expected_output);
-        }
 
         // ignore because of long running test
         #[test]
@@ -1642,13 +1456,111 @@ pub(crate) mod point_scalar_mul {
 
             assert_eq!(ckt_out, out_ref);
         }
+    }
+}
+
+pub(crate) mod hinted_double_scalar_mul {
+    use crate::circuits::sect233k1::builder::{CircuitTrait, Template};
+    use crate::circuits::sect233k1::curve_ckt::CurvePoint;
+    use crate::circuits::sect233k1::curve_scalar_mul_ckt::precompute_table::emit_lookup;
+    use crate::circuits::sect233k1::fr_ckt::Fr;
+
+    // Compute [x1]P1 + x2[P2] + x3[P3].
+    pub(crate) fn emit_hinted_double_scalar_mul<T: CircuitTrait>(
+        bld: &mut T,
+        k1: &Fr,
+        p1: &CurvePoint,
+        k2: &Fr,
+        p2: &CurvePoint,
+        k3: &Fr,
+        p3: &CurvePoint,
+    ) -> CurvePoint {
+        // precompute table for 3 points
+        let table = emit_precompute_hinted_table(bld, p1, p2, p3);
+
+        let mut r = CurvePoint::identity(bld);
+        //Todo: set 155 as Global variable
+        for i in 0..155 {
+            r = Template::emit_point_add_custom(bld, &r, &r); // r = r * 2
+            // get the msb i-th bit of k1, k2, k3
+            // expected that k1, k2, k3 <= 2^155 after decomposition
+            let lidx = vec![k1[154 - i], k2[154 - i], k3[154 - i]];
+            let t_i = emit_lookup(bld, &table, lidx);
+            r = Template::emit_point_add_custom(bld, &r, &t_i);
+        }
+        r
+    }
+
+    // generate precompute table for hinted double scalar multiplication
+    pub(crate) fn emit_precompute_hinted_table<T: CircuitTrait>(
+        bld: &mut T,
+        p0: &CurvePoint,
+        p1: &CurvePoint,
+        p2: &CurvePoint,
+    ) -> Vec<CurvePoint> {
+        let bs = vec![
+            [0, 0, 0],
+            [1, 0, 0],
+            [0, 1, 0],
+            [1, 1, 0],
+            [0, 0, 1],
+            [1, 0, 1],
+            [0, 1, 1],
+            [1, 1, 1],
+        ];
+
+        let table_size = bs.len();
+        let iden = CurvePoint::identity(bld);
+
+        let mut table = Vec::with_capacity(table_size);
+        table.push(iden);
+
+        for i in 1..table_size {
+            let temp_point = add_2_points_with_selects(bld, bs[i][0], p0, bs[i][1], p1);
+            let sel_temp = usize::from((bs[i][0] != 0) || (bs[i][1] != 0));
+            let res_point = add_2_points_with_selects(bld, sel_temp, &temp_point, bs[i][2], &p2,);
+            table.push(res_point);
+        }
+        table
+    }
+
+    fn add_2_points_with_selects<T: CircuitTrait>(
+        bld: &mut T,
+        select0: usize,
+        p0: &CurvePoint,
+        select1: usize,
+        p1: &CurvePoint,
+    ) -> CurvePoint {
+        if select0 == 0 && select1 == 0 {
+            return CurvePoint::identity(bld);
+        }
+        if select0 == 0 {
+            return p1.clone();
+        }
+        if select1 == 0 {
+            return p0.clone();
+        }
+        Template::emit_point_add_custom(bld, p0, p1)
+    }
+
+    #[cfg(test)]
+    mod test {
+        use std::time::Instant;
+        use num_bigint::BigUint;
+        use crate::circuits::sect233k1::builder::{CircuitAdapter, CircuitTrait};
+        use crate::circuits::sect233k1::curve_ckt::{emit_neg_point_with_neg_selector, emit_neg_point_with_pos_selector, CurvePoint};
+        use crate::circuits::sect233k1::curve_ref::{point_add, point_scalar_multiplication};
+        use crate::circuits::sect233k1::curve_scalar_mul_ckt::hinted_double_scalar_mul::emit_hinted_double_scalar_mul;
+        use crate::circuits::sect233k1::fr_ckt::Fr;
+        use crate::circuits::sect233k1::fr_ref::frref_to_bits;
+        use crate::circuits::sect233k1::gf_ref::{bits_to_gfref, gfref_to_bits};
 
         // Todo: add ignore
         #[test]
         fn test_hinted_double_scalar_mul_with_selector() {
-            let p1 = InnerPointRef::generator();
-            let p2 = InnerPointRef::generator();
-            let expected_output = InnerPointRef::identity(); // = 0
+            let p1 = crate::circuits::sect233k1::curve_ref::CurvePointRef::generator();
+            let p2 = crate::circuits::sect233k1::curve_ref::CurvePointRef::generator();
+            let expected_output = crate::circuits::sect233k1::curve_ref::CurvePointRef::identity(); // = 0
 
             let k1_be_bytes = vec![0, 0, 0, 51, 96, 176, 10, 90, 39, 174, 104, 4, 29, 148, 187, 28, 109, 98, 171, 127, 230, 48, 143, 66, 84, 143, 149, 177, 187, 210, 141, 20];
             let k2_be_bytes = vec![0, 0, 0, 26, 108, 65, 9, 244, 48, 225, 36, 47, 208, 219, 69, 144, 176, 74, 146, 191, 44, 28, 58, 190, 137, 175, 120, 202, 225, 15, 139, 63];
@@ -1744,7 +1656,7 @@ pub(crate) mod point_scalar_mul {
             let ckt_z = out_bits.z.map(|id| wires[id]);
             let ckt_t = out_bits.t.map(|id| wires[id]);
 
-            let ckt_out = InnerPointRef {
+            let ckt_out = crate::circuits::sect233k1::curve_ref::CurvePointRef {
                 x: bits_to_gfref(&ckt_x),
                 s: bits_to_gfref(&ckt_s),
                 z: bits_to_gfref(&ckt_z),
