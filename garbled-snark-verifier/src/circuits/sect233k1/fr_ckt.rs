@@ -615,7 +615,7 @@ mod tests {
         let diff1_bits: [bool; FR_LEN] = diff1.map(|id| wires[id]);
         let diff2_bits: [bool; FR_LEN] = diff2.map(|id| wires[id]);
         let zero = [false; FR_LEN];
-        assert_eq!(diff2_bits, zero);
+        assert_eq!(diff1_bits, zero);
         assert_eq!(diff2_bits, zero);
     }
 }

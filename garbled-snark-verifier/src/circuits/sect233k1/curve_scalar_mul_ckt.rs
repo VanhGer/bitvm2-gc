@@ -1465,6 +1465,8 @@ pub(crate) mod hinted_double_scalar_mul {
     use crate::circuits::sect233k1::curve_scalar_mul_ckt::precompute_table::emit_lookup;
     use crate::circuits::sect233k1::fr_ckt::Fr;
 
+    const HINTED_DOUBLE_SCALAR_BITS_LENGTH: usize = 155;
+
     // Compute [x1]P1 + x2[P2] + x3[P3].
     pub(crate) fn emit_hinted_double_scalar_mul<T: CircuitTrait>(
         bld: &mut T,
@@ -1479,12 +1481,10 @@ pub(crate) mod hinted_double_scalar_mul {
         let table = emit_precompute_hinted_table(bld, p1, p2, p3);
 
         let mut r = CurvePoint::identity(bld);
-        //Todo: set 155 as Global variable
-        for i in 0..155 {
+        for i in (0..HINTED_DOUBLE_SCALAR_BITS_LENGTH).rev() {
             r = Template::emit_point_add_custom(bld, &r, &r); // r = r * 2
             // get the msb i-th bit of k1, k2, k3
-            // expected that k1, k2, k3 <= 2^155 after decomposition
-            let lidx = vec![k1[154 - i], k2[154 - i], k3[154 - i]];
+            let lidx = vec![k1[i], k2[i], k3[i]];
             let t_i = emit_lookup(bld, &table, lidx);
             r = Template::emit_point_add_custom(bld, &r, &t_i);
         }

@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::fmt;
 use std::time::Instant;
 
-use crate::circuits::sect233k1::dv_ckt::WITNESS_BIT_LEN;
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelExtend,
     ParallelIterator,

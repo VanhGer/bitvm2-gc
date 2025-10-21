@@ -18,15 +18,14 @@ pub fn dv_snark_verifier_circuit(witness: &VerifierPayloadRef) -> Circuit {
 mod test {
     use crate::circuits::dv_snark::dv_snark_verifier_circuit;
     use crate::circuits::sect233k1::curve_ckt::AffinePointRef;
-    use crate::circuits::sect233k1::dv_ckt::{compile_verifier, ProofRef, PublicInputsRef, TrapdoorRef, VerifierPayloadRef};
+    use crate::circuits::sect233k1::dv_ckt::{ProofRef, PublicInputsRef, TrapdoorRef, VerifierPayloadRef};
     use crate::circuits::sect233k1::fr_ref::FrRef;
     use std::str::FromStr;
     use std::time::Instant;
+    // todo: remove ignore after debugging
     #[test]
-    #[ignore]
+    // #[ignore]
     fn test_dv_snark_verifier_circuit() {
-        let (mut bld, index_info) = compile_verifier();
-
         // Prepare VerifierPayloadRef
         let tau = FrRef::from_str(
             "2730322210350266333305929438402339624225511456370264338590718619370571",
