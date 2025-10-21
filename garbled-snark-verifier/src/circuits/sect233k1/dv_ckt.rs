@@ -411,7 +411,8 @@ pub(crate) fn verify<T: CircuitTrait>(
     let v0 = fr_mul(bld, &tmp0, &secrets.epsilon);
     let generator = CurvePoint::generator(bld);
     let identity = CurvePoint::identity(bld);
-    let fr_zero = Fr::from([bld.zero(); FR_LEN]);
+    let mut fr_one = Fr::from([bld.zero(); FR_LEN]);
+    fr_one[0] = one_wire;
 
     // check the validation of x1, x2, z:
     // u0 = x1/z mod r,  v0 = x2/z mod r
@@ -421,10 +422,11 @@ pub(crate) fn verify<T: CircuitTrait>(
 
     let k1z = emit_fr_mul(bld, &u0, &new_z);
     let k2z = emit_fr_mul(bld, &v0, &new_z);
-    let diff1 = fr_sub(bld, &new_x1, &k1z);
-    let diff2 = fr_sub(bld, &new_x2, &k2z);
-    let diff1_not_zero = ge_unsigned(bld, &diff1, &fr_zero);
-    let diff2_not_zero = ge_unsigned(bld, &diff2, &fr_zero);
+    let diff1 = fr_sub(bld, &k1z, &new_x1);
+    let diff2 = fr_sub(bld, &k2z, &new_x2);
+
+    let diff1_not_zero = ge_unsigned(bld, &diff1, &fr_one);
+    let diff2_not_zero = ge_unsigned(bld, &diff2, &fr_one);
     let diff_not_zero = bld.or_wire(diff1_not_zero, diff2_not_zero);
     let diff_zero = bld.xor_wire(diff_not_zero, one_wire); // both zero
 
