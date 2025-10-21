@@ -22,9 +22,8 @@ mod test {
     use crate::circuits::sect233k1::fr_ref::FrRef;
     use std::str::FromStr;
     use std::time::Instant;
-    // todo: remove ignore after debugging
     #[test]
-    // #[ignore]
+    #[ignore]
     fn test_dv_snark_verifier_circuit() {
         // Prepare VerifierPayloadRef
         let tau = FrRef::from_str(

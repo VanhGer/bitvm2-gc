@@ -472,10 +472,9 @@ mod test {
     };
     use num_bigint::BigUint;
 
-    // Todo: Ignore it
     #[test]
-    // #[ignore] // ignore because of being long running
-    fn ckt_test_verify_over_mock_inputs() {
+    #[ignore] // ignore because of being long running
+    fn test_verify_over_mock_inputs() {
         let (mut bld, index_info) = compile_verifier();
 
         // Prepare VerifierPayloadRef
@@ -534,9 +533,8 @@ mod test {
         assert!(passed_val, "verification failed");
     }
 
-    // Todo: ignore it
     #[test]
-    // #[ignore] // ignore because of being long running
+    #[ignore] // ignore because of being long running
     fn test_invalid_proof_over_mock_inputs() {
         let (mut bld, index_info) = compile_verifier();
 

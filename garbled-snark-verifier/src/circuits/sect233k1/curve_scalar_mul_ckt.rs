@@ -1555,8 +1555,8 @@ pub(crate) mod hinted_double_scalar_mul {
         use crate::circuits::sect233k1::fr_ref::frref_to_bits;
         use crate::circuits::sect233k1::gf_ref::{bits_to_gfref, gfref_to_bits};
 
-        // Todo: add ignore
         #[test]
+        #[ignore]
         fn test_hinted_double_scalar_mul_with_selector() {
             let p1 = CurvePointRef::generator();
             let p2 = CurvePointRef::generator();

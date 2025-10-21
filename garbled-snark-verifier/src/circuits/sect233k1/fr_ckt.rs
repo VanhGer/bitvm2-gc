@@ -560,6 +560,30 @@ mod tests {
     }
 
     #[test]
+    fn test_neg_fr_with_selector() {
+        let a_be_bytes = vec![0, 0, 0, 112, 122, 134, 9, 72, 42, 50, 80, 245, 101, 17, 165, 12, 108, 176, 165, 95, 152, 65, 135, 42, 147, 166, 230, 198, 50, 28, 173, 159];
+        let a_w = BigUint::from_bytes_be(&a_be_bytes);
+        let expected_neg_a_be_bytes = vec![0, 0, 0, 15, 133, 121, 246, 183, 213, 205, 175, 10, 154, 238, 90, 243, 147, 85, 247, 252, 32, 212, 53, 169, 219, 84, 52, 15, 191, 86, 254, 64];
+
+        let mut bld = CircuitAdapter::default();
+        let a: Fr = bld.fresh();
+        let neg: usize = bld.fresh_one();
+        let neg = emit_neg_fr_with_selector(&mut bld, &a, neg);
+        let stats = bld.gate_counts();
+        println!("{stats}");
+
+        let mut witness = Vec::<bool>::new();
+        let awitness = frref_to_bits(&a_w);
+        witness.extend_from_slice(&awitness);
+        witness.push(true); // neg selector
+
+        let wires = bld.eval_gates(&witness);
+        let neg_a_bits: [bool; FR_LEN] = neg.map(|id| wires[id]);
+        let neg_a_w = BigUint::from_bytes_be(&expected_neg_a_be_bytes);
+        assert_eq!(neg_a_bits, frref_to_bits(&neg_a_w));
+    }
+
+    #[test]
     fn test_fr_decompose_mod() {
         // test k1 = x1/z mod r and k2 = x2/z mod r
         let k1_be_bytes = vec![0, 0, 0, 51, 96, 176, 10, 90, 39, 174, 104, 4, 29, 148, 187, 28, 109, 98, 171, 127, 230, 48, 143, 66, 84, 143, 149, 177, 187, 210, 141, 20];
