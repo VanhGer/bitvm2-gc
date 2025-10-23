@@ -441,9 +441,8 @@ mod test {
         let neg = bld.fresh_one();
 
         let c_neg_p1 = super::emit_neg_point_with_neg_selector(&mut bld, &c_p1, neg);
+        println!("number of neg gates: {:?}", bld.gate_counts());
         let sum = super::emit_point_add(&mut bld, &c_p1, &c_neg_p1);
-
-        println!("number of gates: {:?}", bld.gate_counts());
 
         let mut witness = Vec::<bool>::with_capacity(233 * 4 + 1);
         witness.extend(gfref_to_bits(&p1.x));
