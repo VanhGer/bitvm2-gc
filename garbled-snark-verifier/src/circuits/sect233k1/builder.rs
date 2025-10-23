@@ -224,7 +224,7 @@ impl core::ops::Sub for GateCounts {
 }
 
 impl CircuitAdapter {
-    pub(crate) fn build(&self, witness: [bool; WITNESS_BIT_LEN]) -> Circuit {
+    pub fn build(&self, witness: &[bool]) -> Circuit {
         let n_wires = self.next_wire;
         println!("wires: {n_wires}");
 

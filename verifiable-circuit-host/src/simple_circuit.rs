@@ -1,0 +1,125 @@
+use std::time::Instant;
+use num_bigint::BigUint;
+use tracing::info;
+
+use zkm_sdk::{ProverClient, ZKMProofWithPublicValues, ZKMStdin, include_elf, utils as sdk_utils};
+
+use garbled_snark_verifier::circuits::dv_snark::dv_snark_verifier_circuit;
+use garbled_snark_verifier::{bag::Circuit, circuits::sect233k1::types::load_witness_from_files};
+use garbled_snark_verifier::circuits::bn254::fq2::Fq2;
+use garbled_snark_verifier::circuits::sect233k1::builder::{CircuitAdapter, CircuitTrait};
+use garbled_snark_verifier::circuits::sect233k1::fr_ckt::Fr;
+use garbled_snark_verifier::circuits::sect233k1::fr_ref::frref_to_bits;
+
+mod mem_fs;
+mod utils;
+
+/// The ELF we want to execute inside the zkVM.
+const ELF: &[u8] = include_elf!("verifiable-circuit");
+
+// this circuit receive 2 Fr numbers and a selector bit
+// return the selected number
+fn custom_simple_circuit() -> Circuit {
+    let mut bld = CircuitAdapter::default();
+    let a: Fr = bld.fresh();
+    let b: Fr = bld.fresh();
+    let sel = bld.fresh_one();
+
+    let mut res: Fr = [bld.zero(); 232];
+    for i in 0..232 {
+        let d = bld.xor_wire(a[i], b[i]);
+        let xd = bld.and_wire(sel, d);
+        res[i] = bld.xor_wire(xd, a[i]);
+    }
+
+    // witness
+    let k1_be_bytes = vec![
+        0, 0, 0, 51, 96, 176, 10, 90, 39, 174, 104, 4, 29, 148, 187, 28, 109, 98, 171, 127,
+        230, 48, 143, 66, 84, 143, 149, 177, 187, 210, 141, 20,
+    ];
+    let k2_be_bytes = vec![
+        0, 0, 0, 26, 108, 65, 9, 244, 48, 225, 36, 47, 208, 219, 69, 144, 176, 74, 146, 191,
+        44, 28, 58, 190, 137, 175, 120, 202, 225, 15, 139, 63,
+    ];
+    let k1 = BigUint::from_bytes_be(&k1_be_bytes);
+    let k2 = BigUint::from_bytes_be(&k2_be_bytes);
+    let k1witness = frref_to_bits(&k1);
+    let k2witness = frref_to_bits(&k2);
+
+    let mut witness = Vec::<bool>::new();
+    witness.extend_from_slice(&k1witness);
+    witness.extend_from_slice(&k2witness);
+    witness.push(true); // selector k2
+
+    let circuit = bld.build(&witness);
+    circuit
+}
+
+fn split_circuit() {
+    let mut circuit = custom_simple_circuit();
+    circuit.gate_counts().print();
+    println!("Wires: {}", circuit.0.len());
+    utils::gen_sub_circuits(&mut circuit, 1_000_000);
+}
+
+fn main() {
+    // Setup logging.
+    sdk_utils::setup_logger();
+
+    let start_total = Instant::now();
+
+    let start = Instant::now();
+    split_circuit();
+    let elapsed = start.elapsed();
+    info!(elapsed = ?elapsed, "split circuit");
+
+    // The input stream that the guest will read from using `zkm_zkvm::io::read`. Note that the
+    // types of the elements in the input stream must match the types being read in the guest.
+    let mut stdin = ZKMStdin::new();
+
+    // let ser_sc_0 = std::fs::read("garbled_0.bin").unwrap();
+    let ser_sc_0 = mem_fs::MemFile::read("garbled_0.bin").unwrap();
+    info!("ser_sc_0 size: {:?} bytes", ser_sc_0.len());
+
+    // Write the read sub-circuit to a file for inspection or later use.
+    std::fs::write("garbled_0.bin", &ser_sc_0)
+        .expect("Failed to write sub-circuit to garbled_0.bin");
+    info!("Saved sub-circuit to garbled_0.bin");
+
+    // info!("Check guest");
+    // garbled_snark_verifier::core::utils::check_guest(&ser_sc_0);
+
+    stdin.write_vec(ser_sc_0);
+    // Create a `ProverClient` method.
+    let client = ProverClient::new();
+
+    let start = Instant::now();
+    // Execute the guest using the `ProverClient.execute` method, without generating a proof.
+    let (_public_values, report) = client.execute(ELF, stdin.clone()).run().unwrap();
+
+    let elapsed = start.elapsed();
+    info!(elapsed = ?elapsed, "executed program with {} cycles", report.total_instruction_count());
+
+    let start = Instant::now();
+    // Generate the proof for the given guest and input.
+    let (pk, vk) = client.setup(ELF);
+    let proof = client.prove(&pk, stdin).compressed().run().unwrap();
+
+    let elapsed = start.elapsed();
+    info!(step = "generated proof", elapsed =? elapsed, "finish proof generation");
+
+    // Verify proof and public values
+    client.verify(&proof, &vk).expect("verification failed");
+
+    // Test a round trip of proof serialization and deserialization.
+    proof.save("proof-with-pis.bin").expect("saving proof failed");
+    let deserialized_proof =
+        ZKMProofWithPublicValues::load("proof-with-pis.bin").expect("loading proof failed");
+
+    // Verify the deserialized proof.
+    client.verify(&deserialized_proof, &vk).expect("verification failed");
+
+    info!("successfully generated and verified proof for the program!");
+    let total_elapsed = start_total.elapsed();
+    info!(elapsed = ?total_elapsed, "total time");
+}
