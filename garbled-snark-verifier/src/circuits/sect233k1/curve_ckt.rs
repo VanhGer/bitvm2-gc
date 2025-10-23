@@ -332,20 +332,17 @@ pub(crate) fn template_emit_point_add() -> Template {
 mod test {
     use std::{str::FromStr, time::Instant};
 
-    use crate::circuits::sect233k1::{
-        builder::CircuitTrait,
-        gf_ref::bits_to_gfref,
-    };
+    use crate::circuits::sect233k1::{builder::CircuitTrait, gf_ref::bits_to_gfref};
     use num_bigint::{BigUint, RandomBits};
     use rand::Rng;
 
+    use super::{CurvePoint, emit_point_add};
+    use crate::circuits::sect233k1::curve_ref::CurvePointRef;
     use crate::circuits::sect233k1::{
         builder::CircuitAdapter,
         curve_ref::{CurvePointRef as InnerPointRef, point_add as ref_point_add},
         gf_ref::{gfref_mul, gfref_to_bits},
     };
-    use crate::circuits::sect233k1::curve_ref::CurvePointRef;
-    use super::{CurvePoint, emit_point_add};
 
     // Creates a random point ensuring T = X*Z
     fn random_point() -> InnerPointRef {
@@ -421,16 +418,16 @@ mod test {
             x: BigUint::from_str(
                 "13283792768796718556929275469989697816663440403339868882741001477299174",
             )
-                .unwrap(),
+            .unwrap(),
             s: BigUint::from_str(
                 "6416386389908495168242210184454780244589215014363767030073322872085145",
             )
-                .unwrap(),
+            .unwrap(),
             z: BigUint::from_str("1").unwrap(),
             t: BigUint::from_str(
                 "13283792768796718556929275469989697816663440403339868882741001477299174",
             )
-                .unwrap(),
+            .unwrap(),
         };
         let p1_double = ref_point_add(&p1, &p1);
         let identity = CurvePointRef::identity();

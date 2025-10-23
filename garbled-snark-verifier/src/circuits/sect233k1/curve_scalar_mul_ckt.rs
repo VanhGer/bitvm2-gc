@@ -1456,6 +1456,33 @@ pub(crate) mod point_scalar_mul {
 
             assert_eq!(ckt_out, out_ref);
         }
+
+        #[test]
+        // This test just printout the circuit size for tau-adic scalar multiplication
+        // in case of k1P1 + k2P2
+        fn test_tau_adic_sm_circuit_size() {
+            let window = 5;
+            let mut bld = CircuitAdapter::default();
+            let k1_labels: Fr = bld.fresh();
+            let k2_labels: Fr = bld.fresh();
+            let p1_labels: CurvePoint =
+                CurvePoint { x: bld.fresh(), s: bld.fresh(), z: bld.fresh(), t: bld.fresh() };
+            let p2_labels: CurvePoint =
+                CurvePoint { x: bld.fresh(), s: bld.fresh(), z: bld.fresh(), t: bld.fresh() };
+
+            println!("emit_mul_windowed_tau");
+            let st = Instant::now();
+
+            // k1P1 + k2P2
+            let k1p1 = emit_mul_windowed_tau(&mut bld, &k1_labels, &p1_labels, window);
+            let k2p2 = emit_mul_windowed_tau(&mut bld, &k2_labels, &p2_labels, window);
+            let res_labels = Template::emit_point_add_custom(&mut bld, &k1p1, &k2p2);
+
+            let st = st.elapsed();
+            println!("emit_mul_windowed_tau took {} seconds", st.as_secs());
+            let stats = bld.gate_counts();
+            println!("{stats}");
+        }
     }
 }
 
@@ -1498,7 +1525,7 @@ pub(crate) mod hinted_double_scalar_mul {
         p1: &CurvePoint,
         p2: &CurvePoint,
     ) -> Vec<CurvePoint> {
-        let bs = vec![
+        let bs = [
             [0, 0, 0],
             [1, 0, 0],
             [0, 1, 0],
@@ -1518,7 +1545,7 @@ pub(crate) mod hinted_double_scalar_mul {
         for i in 1..table_size {
             let temp_point = add_2_points_with_selects(bld, bs[i][0], p0, bs[i][1], p1);
             let sel_temp = usize::from((bs[i][0] != 0) || (bs[i][1] != 0));
-            let res_point = add_2_points_with_selects(bld, sel_temp, &temp_point, bs[i][2], &p2,);
+            let res_point = add_2_points_with_selects(bld, sel_temp, &temp_point, bs[i][2], &p2);
             table.push(res_point);
         }
         table
@@ -1545,15 +1572,45 @@ pub(crate) mod hinted_double_scalar_mul {
 
     #[cfg(test)]
     mod test {
-        use std::time::Instant;
-        use num_bigint::BigUint;
         use crate::circuits::sect233k1::builder::{CircuitAdapter, CircuitTrait};
-        use crate::circuits::sect233k1::curve_ckt::{emit_neg_point_with_neg_selector, emit_neg_point_with_pos_selector, CurvePoint};
-        use crate::circuits::sect233k1::curve_ref::{point_add, point_scalar_multiplication, CurvePointRef};
+        use crate::circuits::sect233k1::curve_ckt::{
+            CurvePoint, emit_neg_point_with_neg_selector, emit_neg_point_with_pos_selector,
+        };
+        use crate::circuits::sect233k1::curve_ref::{
+            CurvePointRef, point_add, point_scalar_multiplication,
+        };
         use crate::circuits::sect233k1::curve_scalar_mul_ckt::hinted_double_scalar_mul::emit_hinted_double_scalar_mul;
         use crate::circuits::sect233k1::fr_ckt::Fr;
         use crate::circuits::sect233k1::fr_ref::frref_to_bits;
         use crate::circuits::sect233k1::gf_ref::{bits_to_gfref, gfref_to_bits};
+        use num_bigint::BigUint;
+        use std::time::Instant;
+
+        // This test just printout the circuit size for hinted double scalar multiplication
+        // in case of x1P1 + x2P2 + x3P3
+        #[test]
+        fn test_hinted_double_scalar_mul_circuit_size() {
+            let mut bld = CircuitAdapter::default();
+            let x1labels: Fr = bld.fresh();
+            let x2labels: Fr = bld.fresh();
+            let x3labels: Fr = bld.fresh();
+            let p1labels: CurvePoint =
+                CurvePoint { x: bld.fresh(), s: bld.fresh(), z: bld.fresh(), t: bld.fresh() };
+            let p2labels: CurvePoint =
+                CurvePoint { x: bld.fresh(), s: bld.fresh(), z: bld.fresh(), t: bld.fresh() };
+            let p3labels: CurvePoint =
+                CurvePoint { x: bld.fresh(), s: bld.fresh(), z: bld.fresh(), t: bld.fresh() };
+
+            println!("emit_triple_scalar_multiplication");
+            let st = Instant::now();
+            let out_bits = emit_hinted_double_scalar_mul(
+                &mut bld, &x1labels, &p1labels, &x2labels, &p2labels, &x3labels, &p3labels,
+            );
+            let st = st.elapsed();
+            println!("emit_triple_scalar_multiplication took {} seconds", st.as_secs());
+            let stats = bld.gate_counts();
+            println!("{stats}");
+        }
 
         #[test]
         #[ignore]
@@ -1562,11 +1619,27 @@ pub(crate) mod hinted_double_scalar_mul {
             let p2 = CurvePointRef::generator();
             let expected_output = CurvePointRef::identity(); // = 0
 
-            let k1_be_bytes = vec![0, 0, 0, 51, 96, 176, 10, 90, 39, 174, 104, 4, 29, 148, 187, 28, 109, 98, 171, 127, 230, 48, 143, 66, 84, 143, 149, 177, 187, 210, 141, 20];
-            let k2_be_bytes = vec![0, 0, 0, 26, 108, 65, 9, 244, 48, 225, 36, 47, 208, 219, 69, 144, 176, 74, 146, 191, 44, 28, 58, 190, 137, 175, 120, 202, 225, 15, 139, 63];
-            let x1_be_bytes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 131, 96, 158, 213, 110, 156, 186, 202, 3, 203, 165, 199, 221, 172, 156, 232, 214, 228, 39];
-            let x2_be_bytes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 174, 223, 194, 147, 141, 52, 233, 166, 56, 189, 163, 209, 209, 141, 210, 79, 165, 145, 131];
-            let x3_be_bytes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 100, 192, 131, 198, 143, 204, 6, 70, 212, 104, 61, 59, 3, 251, 190, 41, 255, 150, 205];
+            let k1_be_bytes = vec![
+                0, 0, 0, 51, 96, 176, 10, 90, 39, 174, 104, 4, 29, 148, 187, 28, 109, 98, 171, 127,
+                230, 48, 143, 66, 84, 143, 149, 177, 187, 210, 141, 20,
+            ];
+            let k2_be_bytes = vec![
+                0, 0, 0, 26, 108, 65, 9, 244, 48, 225, 36, 47, 208, 219, 69, 144, 176, 74, 146,
+                191, 44, 28, 58, 190, 137, 175, 120, 202, 225, 15, 139, 63,
+            ];
+            let x1_be_bytes = vec![
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 131, 96, 158, 213, 110, 156, 186, 202, 3,
+                203, 165, 199, 221, 172, 156, 232, 214, 228, 39,
+            ];
+            let x2_be_bytes = vec![
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 174, 223, 194, 147, 141, 52, 233, 166, 56,
+                189, 163, 209, 209, 141, 210, 79, 165, 145, 131,
+            ];
+            let x3_be_bytes = vec![
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 100, 192, 131, 198, 143, 204, 6, 70, 212,
+                104, 61, 59, 3, 251, 190, 41, 255, 150, 205,
+            ];
+
             let x1 = BigUint::from_bytes_be(&x1_be_bytes);
             let x2 = BigUint::from_bytes_be(&x2_be_bytes);
             let x3 = BigUint::from_bytes_be(&x3_be_bytes);
@@ -1641,7 +1714,9 @@ pub(crate) mod hinted_double_scalar_mul {
             let new_p2 = emit_neg_point_with_neg_selector(&mut bld, &p2labels, x2_neg);
             // because we compute ... + (-zQ).
             let new_p3 = emit_neg_point_with_pos_selector(&mut bld, &p3labels, x3_neg);
-            let out_bits = emit_hinted_double_scalar_mul(&mut bld, &x1labels, &new_p1, &x2labels, &new_p2, &x3labels, &new_p3);
+            let out_bits = emit_hinted_double_scalar_mul(
+                &mut bld, &x1labels, &new_p1, &x2labels, &new_p2, &x3labels, &new_p3,
+            );
             let st = st.elapsed();
             println!("test_hinted_double_scalar_mul_with_selector took {} seconds", st.as_secs());
 
