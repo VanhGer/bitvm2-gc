@@ -16,6 +16,10 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
     circuit.1.chunks(max_gates).enumerate().zip(garbled_gates.chunks_mut(max_gates)).for_each(
         |((i, w), garblings)| {
             info!(step = "gen_sub_circuits", "Split batch {i}/{size}");
+            let ciphertexts: Vec<_> = garblings
+                .iter()
+                .filter_map(|g| g.as_ref().cloned())
+                .collect();
             let out = SerializableCircuit {
                 gates: w
                     .iter()
@@ -27,7 +31,7 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
                         gid: w.gid,
                     })
                     .collect(),
-                garblings: garblings.to_vec(),
+                garblings: ciphertexts,
             };
             // In this demo, we only save the first sub-circuit
             if i == 0 {

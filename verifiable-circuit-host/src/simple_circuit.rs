@@ -21,15 +21,17 @@ const ELF: &[u8] = include_elf!("verifiable-circuit");
 // return the selected number
 fn custom_simple_circuit() -> Circuit {
     let mut bld = CircuitAdapter::default();
-    let a: Fr = bld.fresh();
-    let b: Fr = bld.fresh();
+    const N: usize = 20;
+    let a: [usize; N] = bld.fresh();
+    let b: [usize; N] = bld.fresh();
     let sel = bld.fresh_one();
 
-    let mut res: Fr = [bld.zero(); 232];
-    for i in 0..232 {
+    let mut res = [bld.zero(); N];
+    for i in 0..N {
         let d = bld.xor_wire(a[i], b[i]);
         let xd = bld.and_wire(sel, d);
         res[i] = bld.xor_wire(xd, a[i]);
+        res[i] = d;
     }
 
     // witness
@@ -46,10 +48,13 @@ fn custom_simple_circuit() -> Circuit {
     let k1witness = frref_to_bits(&k1);
     let k2witness = frref_to_bits(&k2);
 
+    let k1witness = k1witness[..N].to_vec();
+    let k2witness = k2witness[..N].to_vec();
+
     let mut witness = Vec::<bool>::new();
     witness.extend_from_slice(&k1witness);
     witness.extend_from_slice(&k2witness);
-    witness.push(true); // selector k2
+    // witness.push(true); // selector k2
 
     let circuit = bld.build(&witness);
     circuit
@@ -100,26 +105,26 @@ fn main() {
     let elapsed = start.elapsed();
     info!(elapsed = ?elapsed, "executed program with {} cycles", report.total_instruction_count());
 
-    let start = Instant::now();
-    // Generate the proof for the given guest and input.
-    let (pk, vk) = client.setup(ELF);
-    let proof = client.prove(&pk, stdin).compressed().run().unwrap();
-
-    let elapsed = start.elapsed();
-    info!(step = "generated proof", elapsed =? elapsed, "finish proof generation");
-
-    // Verify proof and public values
-    client.verify(&proof, &vk).expect("verification failed");
-
-    // Test a round trip of proof serialization and deserialization.
-    proof.save("proof-with-pis.bin").expect("saving proof failed");
-    let deserialized_proof =
-        ZKMProofWithPublicValues::load("proof-with-pis.bin").expect("loading proof failed");
-
-    // Verify the deserialized proof.
-    client.verify(&deserialized_proof, &vk).expect("verification failed");
-
-    info!("successfully generated and verified proof for the program!");
-    let total_elapsed = start_total.elapsed();
-    info!(elapsed = ?total_elapsed, "total time");
+    // let start = Instant::now();
+    // // Generate the proof for the given guest and input.
+    // let (pk, vk) = client.setup(ELF);
+    // let proof = client.prove(&pk, stdin).compressed().run().unwrap();
+    //
+    // let elapsed = start.elapsed();
+    // info!(step = "generated proof", elapsed =? elapsed, "finish proof generation");
+    //
+    // // Verify proof and public values
+    // client.verify(&proof, &vk).expect("verification failed");
+    //
+    // // Test a round trip of proof serialization and deserialization.
+    // proof.save("proof-with-pis.bin").expect("saving proof failed");
+    // let deserialized_proof =
+    //     ZKMProofWithPublicValues::load("proof-with-pis.bin").expect("loading proof failed");
+    //
+    // // Verify the deserialized proof.
+    // client.verify(&deserialized_proof, &vk).expect("verification failed");
+    //
+    // info!("successfully generated and verified proof for the program!");
+    // let total_elapsed = start_total.elapsed();
+    // info!(elapsed = ?total_elapsed, "total time");
 }
