@@ -88,7 +88,7 @@ pub struct SerializableGate {
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct SerializableCircuit {
     pub gates: Vec<SerializableGate>, // Must also be serializable
-    pub garblings: Vec<Option<S>>,
+    pub garblings: Vec<S>,
 }
 
 impl From<&Circuit> for SerializableCircuit {
@@ -205,9 +205,10 @@ pub fn check_guest(buf: &[u8]) {
     let num_gates = reader.read_u64() as usize;
 
     // 2. Create a vector to store the computed garblings.
-    let mut computed_garblings = Vec::with_capacity(num_gates);
+    let mut computed_garblings: Vec<S> = Vec::with_capacity(num_gates);
 
     // 3. Loop through each gate's data in the stream.
+    let mut free_gates = 0;
     for _ in 0..num_gates {
         // For wire_a, read the label and correctly skip the rest of the wire.
         let a0 = reader.read_option_s().expect("Missing wire_a label");
@@ -225,18 +226,22 @@ pub fn check_guest(buf: &[u8]) {
         let gid = reader.read_u32();
 
         // Immediately compute the garbling.
-        let (_, ciphertext) = gate_garbled(a0, b0, gid, gate_type);
-        computed_garblings.push(ciphertext);
+        if (gate_type as usize) < 8 {
+            let (_, ciphertext) = gate_garbled(a0, b0, gid, gate_type);
+            computed_garblings.push(ciphertext.unwrap());
+        } else {
+            free_gates += 1;
+        }
     }
 
     // 4. At this point, the reader is at the start of the serialized `garblings` Vec.
     // Read the number of expected garblings.
     let num_garblings = reader.read_u64() as usize;
-    assert_eq!(num_gates, num_garblings, "Mismatch in number of garblings");
+    assert_eq!(num_gates, num_garblings + free_gates, "Mismatch in number of garblings");
 
     // 5. Compare computed garblings with expected garblings from the stream.
     for i in 0..num_garblings {
-        let expected_garbling = reader.read_option_s();
+        let expected_garbling = reader.read_s();
         assert_eq!(computed_garblings[i], expected_garbling, "Garbling mismatch at index {}", i);
     }
 }
