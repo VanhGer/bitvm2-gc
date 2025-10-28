@@ -1,6 +1,5 @@
 use std::{cell::RefCell, rc::Rc, sync::atomic::AtomicU32};
 use std::collections::HashMap;
-use std::fs::read;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -96,17 +95,11 @@ pub struct SerializableCircuit {
 impl From<&Circuit> for SerializableCircuit {
     fn from(c: &Circuit) -> Self {
         let wires: Vec<Wire> = c.0.iter().map(|w| w.borrow().clone()).collect();
-        let wire_id_map: HashMap<Wire, u32> = wires
-            .iter()
-            .cloned()
-            .enumerate()
-            .map(|(i, w)| (w, i as u32))
-            .collect();
         let gates = c.1.iter().map(|w| SerializableGate {
             gate_type: w.gate_type,
-            wire_a_id: *wire_id_map.get(&*w.wire_a.borrow()).unwrap(),
-            wire_b_id: *wire_id_map.get(&*w.wire_b.borrow()).unwrap(),
-            wire_c_id: *wire_id_map.get(&*w.wire_c.borrow()).unwrap(),
+            wire_a_id: w.wire_a.borrow().id.unwrap(),
+            wire_b_id: w.wire_b.borrow().id.unwrap(),
+            wire_c_id: w.wire_c.borrow().id.unwrap(),
             gid: w.gid,
         }).collect();
         Self { gates, garblings: Vec::new(), wires }
@@ -190,15 +183,12 @@ impl<'a> Reader<'a> {
             self.cursor += 1;
         }
     }
-
+    
     #[inline(always)]
-    fn skip_wire(&mut self) {
-        // Option<S>
+    fn skip_option_u32(&mut self) {
         if self.read_u8() != 0 {
-            self.cursor += LABEL_SIZE;
+            self.cursor += 4;
         }
-        // Option<bool>
-        self.skip_option_bool();
     }
 
     #[inline(always)]
@@ -224,9 +214,10 @@ pub fn check_guest(buf: &[u8]) {
     let num_wires = reader.read_u64() as usize;
     let mut wire_labels = Vec::with_capacity(num_wires);
     for _ in 0..num_wires {
-        // For wire_a, read the label and correctly skip the rest of the wire.
+        // Read the label and correctly skip the rest of the wire.
         let label = reader.read_option_s().expect("Missing wire_a label");
         reader.skip_option_bool();
+        reader.skip_option_u32();
         wire_labels.push(label);
     }
 

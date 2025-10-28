@@ -11,6 +11,10 @@ pub mod bag {
     pub type Wires = Vec<Wirex>;
     pub use crate::core::gate::GateCount;
     pub fn new_wirex() -> Wirex {
-        Rc::new(RefCell::new(Wire::new()))
+        Rc::new(RefCell::new(Wire::new(None)))
+    }
+
+    pub fn new_wirex_with_id(id: u32) -> Wirex {
+        Rc::new(RefCell::new(Wire::new(Some(id))))
     }
 }

@@ -235,7 +235,7 @@ impl CircuitAdapter {
             if i.is_multiple_of(10_000_000) {
                 println!("wires: {} M", i / 1_000_000);
             }
-            wires.push(new_wirex());
+            wires.push(new_wirex_with_id(i as u32));
         }
         println!("init wires took:{:?}", start.elapsed());
 
