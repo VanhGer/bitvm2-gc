@@ -87,14 +87,23 @@ pub struct SerializableGate {
 
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct SerializableCircuit {
-    pub wires: Vec<Wire>,
+    pub wires: Vec<SerializableWire>,
     pub gates: Vec<SerializableGate>, // Must also be serializable
     pub garblings: Vec<S>,
 }
 
+#[derive(Default, Clone, Serialize, Deserialize)]
+pub struct SerializableWire {
+    pub label: Option<S>,
+    pub value: Option<bool>,
+}
+
 impl From<&Circuit> for SerializableCircuit {
     fn from(c: &Circuit) -> Self {
-        let wires: Vec<Wire> = c.0.iter().map(|w| w.borrow().clone()).collect();
+        let wires: Vec<SerializableWire> = c.0.iter().map(|w| SerializableWire {
+            label: w.borrow().label,
+            value: w.borrow().value,
+        }).collect();
         let gates = c.1.iter().map(|w| SerializableGate {
             gate_type: w.gate_type,
             wire_a_id: w.wire_a.borrow().id.unwrap(),
@@ -109,7 +118,14 @@ impl From<&Circuit> for SerializableCircuit {
 impl From<&SerializableCircuit> for Circuit {
     fn from(sc: &SerializableCircuit) -> Self {
         let wires_rc: Vec<Rc<RefCell<Wire>>> = sc.wires.iter()
-            .map(|w| Rc::new(RefCell::new(w.clone())))
+            .map(|w| {
+                let wire = Wire {
+                    label: w.label,
+                    value: w.value,
+                    id: None,
+                };
+                Rc::new(RefCell::new(wire))
+            })
             .collect();
 
         let gates = sc.gates.iter().map(|g| {
@@ -183,13 +199,6 @@ impl<'a> Reader<'a> {
             self.cursor += 1;
         }
     }
-    
-    #[inline(always)]
-    fn skip_option_u32(&mut self) {
-        if self.read_u8() != 0 {
-            self.cursor += 4;
-        }
-    }
 
     #[inline(always)]
     fn read_gate_type(&mut self) -> GateType {
@@ -217,7 +226,6 @@ pub fn check_guest(buf: &[u8]) {
         // Read the label and correctly skip the rest of the wire.
         let label = reader.read_option_s().expect("Missing wire_a label");
         reader.skip_option_bool();
-        reader.skip_option_u32();
         wire_labels.push(label);
     }
 
