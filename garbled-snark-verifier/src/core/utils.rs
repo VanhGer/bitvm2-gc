@@ -78,56 +78,69 @@ pub fn hash(input: &[u8]) -> [u8; LABEL_SIZE] {
 
 #[derive(Serialize, Deserialize, Default, Debug, Clone)]
 pub struct SerializableGate {
-    pub wire_a: Wire,
-    pub wire_b: Wire,
-    pub wire_c: Wire,
     pub gate_type: GateType,
+    pub wire_a_id: u32,
+    pub wire_b_id: u32,
+    pub wire_c_id: u32,
     pub gid: u32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SerializableWire {
+    pub label: Option<S>,
+    pub value: Option<bool>,
 }
 
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct SerializableCircuit {
+    pub wires: Vec<SerializableWire>,
     pub gates: Vec<SerializableGate>, // Must also be serializable
     pub garblings: Vec<S>,
 }
 
 impl From<&Circuit> for SerializableCircuit {
     fn from(c: &Circuit) -> Self {
-        //let wires = c.0.iter().map(|w| w.borrow().clone()).collect();
-        let gates =
-            c.1.iter()
-                .map(|w| SerializableGate {
-                    wire_a: w.wire_a.borrow().clone(),
-                    wire_b: w.wire_b.borrow().clone(),
-                    wire_c: w.wire_c.borrow().clone(),
-                    gate_type: w.gate_type,
-                    gid: w.gid,
-                })
-                .collect();
-        Self { gates, garblings: Vec::new() }
+        let wires: Vec<SerializableWire> = c.0.iter().map(|w| SerializableWire {
+            label: w.borrow().label,
+            value: w.borrow().value,
+        }).collect();
+        let gates = c.1.iter().map(|w| SerializableGate {
+            gate_type: w.gate_type,
+            wire_a_id: w.wire_a.borrow().id.unwrap(),
+            wire_b_id: w.wire_b.borrow().id.unwrap(),
+            wire_c_id: w.wire_c.borrow().id.unwrap(),
+            gid: w.gid,
+        }).collect();
+        Self { gates, garblings: Vec::new(), wires }
     }
 }
 
 impl From<&SerializableCircuit> for Circuit {
     fn from(sc: &SerializableCircuit) -> Self {
-        let mut wires = vec![];
-        let gates = sc
-            .gates
-            .iter()
-            .map(|g| {
-                wires.push(Rc::new(RefCell::new(g.wire_a.clone())));
-                wires.push(Rc::new(RefCell::new(g.wire_b.clone())));
-                wires.push(Rc::new(RefCell::new(g.wire_c.clone())));
-                Gate {
-                    wire_a: wires[wires.len() - 3].clone(),
-                    wire_b: wires[wires.len() - 2].clone(),
-                    wire_c: wires[wires.len() - 1].clone(),
-                    gate_type: g.gate_type,
-                    gid: g.gid,
-                }
+        let wires_rc: Vec<Rc<RefCell<Wire>>> = sc.wires.iter()
+            .map(|w| {
+                let wire = Wire {
+                    label: w.label,
+                    value: w.value,
+                    id: None,
+                };
+                Rc::new(RefCell::new(wire))
             })
             .collect();
-        Self(wires, gates)
+        let gates = sc.gates.iter().map(|g| {
+            let a = wires_rc[g.wire_a_id as usize].clone();
+            let b = wires_rc[g.wire_b_id as usize].clone();
+            let c = wires_rc[g.wire_c_id as usize].clone();
+            Gate {
+                wire_a: a,
+                wire_b: b,
+                wire_c: c,
+                gate_type: g.gate_type,
+                gid: g.gid,
+            }
+        }).collect();
+
+        Self(wires_rc, gates)
     }
 }
 
@@ -141,6 +154,7 @@ impl<'a> Reader<'a> {
         Reader { buf, cursor: 0 }
     }
 
+    #[inline(always)]
     fn read_u8(&mut self) -> u8 {
         let b = self.buf[self.cursor];
         self.cursor += 1;
@@ -161,6 +175,7 @@ impl<'a> Reader<'a> {
         v
     }
 
+    #[inline(always)]
     fn read_s(&mut self) -> S {
         let mut arr = [0u8; LABEL_SIZE];
         arr.copy_from_slice(&self.buf[self.cursor..self.cursor + LABEL_SIZE]);
@@ -168,6 +183,7 @@ impl<'a> Reader<'a> {
         S(arr)
     }
 
+    #[inline(always)]
     fn read_option_s(&mut self) -> Option<S> {
         match self.read_u8() {
             0 => None,
@@ -176,6 +192,7 @@ impl<'a> Reader<'a> {
         }
     }
 
+    #[inline(always)]
     fn skip_option_bool(&mut self) {
         if self.read_u8() != 0 {
             self.cursor += 1;
@@ -191,46 +208,70 @@ impl<'a> Reader<'a> {
         self.skip_option_bool();
     }
 
+    #[inline(always)]
     fn read_gate_type(&mut self) -> GateType {
         let d = self.read_u32();
         GateType::try_from(d as u8).expect("Invalid GateType")
     }
+    #[inline(always)]
+    fn skip_wires_and_gid(&mut self) {
+        self.cursor += 4 * 4;
+    }
+
+    #[inline(always)]
+    fn skip_wire_id(&mut self) {
+        self.cursor += 4;
+    }
+
 }
 
 pub fn check_guest(buf: &[u8]) {
     let mut reader = Reader::new(buf);
 
-    // 1. Read the number of gates from the start of the buffer.
+    // Read the number of wires
+    let num_wires = reader.read_u64() as usize;
+    let mut wire_labels = Vec::with_capacity(num_wires);
+    for _ in 0..num_wires {
+        // Read the label and correctly skip the rest of the wire.
+        let label = reader.read_option_s().expect("Missing wire_a label");
+        reader.skip_option_bool();
+        wire_labels.push(label);
+    }
+
+    // Read the number of gates from the start of the buffer.
     // bincode serializes Vec length as a u64.
     let num_gates = reader.read_u64() as usize;
 
-    // 2. Create a vector to store the computed garblings.
+    // Create a vector to store the computed garblings.
     let mut computed_garblings: Vec<S> = Vec::with_capacity(num_gates);
 
-    // 3. Loop through each gate's data in the stream.
+    // Loop through each gate's data in the stream.
     let mut free_gates = 0;
     for _ in 0..num_gates {
-        // For wire_a, read the label and correctly skip the rest of the wire.
-        let a0 = reader.read_option_s().expect("Missing wire_a label");
-        reader.skip_option_bool();
-
-        // For wire_b, read the label and correctly skip the rest of the wire.
-        let b0 = reader.read_option_s().expect("Missing wire_b label");
-        reader.skip_option_bool();
-
-        // Skip wire_c entirely.
-        reader.skip_wire();
-
-        // Read gate_type and gid.
+        // Read gate_type
         let gate_type = reader.read_gate_type();
-        let gid = reader.read_u32();
+        if (gate_type as usize) > 7 {
+            // this is the xor gate, no need to read the rest of gate
+            reader.skip_wires_and_gid();
+            free_gates += 1;
+        } else {
+            // For wire_a, read the wire_id
+            let a_id = reader.read_u32() as usize;
+            let a0 = wire_labels[a_id];
 
-        // Immediately compute the garbling.
-        if (gate_type as usize) < 8 {
+            // For wire_b, read the wire_id
+            let b_id = reader.read_u32() as usize;
+            let b0 = wire_labels[b_id];
+
+            // skip wire_c entirely
+            reader.skip_wire_id();
+
+            // Read gid
+            let gid = reader.read_u32();
+
+            // Immediately compute the garbling.
             let (_, ciphertext) = gate_garbled(a0, b0, gid, gate_type);
             computed_garblings.push(ciphertext.unwrap());
-        } else {
-            free_gates += 1;
         }
     }
 

@@ -29,7 +29,7 @@ fn custom_dv_snark_circuit() -> Circuit {
     for gate in &mut circuit.1 {
         gate.evaluate();
     }
-    assert!(circuit.0[0].borrow().get_value());
+    assert!(circuit.0.last().unwrap().borrow().get_value());
 
     let elapsed = start.elapsed();
     info!(step = "Eval circuit", elapsed = ?elapsed);

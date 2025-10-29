@@ -1,7 +1,8 @@
 use crate::mem_fs;
-use garbled_snark_verifier::bag::Circuit;
-use garbled_snark_verifier::core::utils::{SerializableCircuit, SerializableGate};
+use garbled_snark_verifier::bag::{Circuit, Wire};
+use garbled_snark_verifier::core::utils::{SerializableCircuit, SerializableGate, SerializableWire};
 use std::time::Instant;
+use indexmap::IndexMap;
 use tracing::info;
 
 pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
@@ -13,6 +14,7 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
     let size = circuit.1.len().div_ceil(max_gates);
 
     let start = Instant::now();
+    let wires: Vec<Wire> = circuit.0.iter().map(|w| w.borrow().clone()).collect();
     circuit.1.chunks(max_gates).enumerate().zip(garbled_gates.chunks_mut(max_gates)).for_each(
         |((i, w), garblings)| {
             info!(step = "gen_sub_circuits", "Split batch {i}/{size}");
@@ -20,18 +22,56 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
                 .iter()
                 .filter_map(|g| g.as_ref().cloned())
                 .collect();
+
+            // All of this should be removed.
+            let start = Instant::now();
+            let mut sub_wires_map: IndexMap<u32, u32> = IndexMap::new();
+            let mut next_sub_id = 0;
+            for gate in w {
+                let wire_a_id = gate.wire_a.borrow().id.unwrap();
+                sub_wires_map.entry(wire_a_id).or_insert_with(|| {
+                    let id = next_sub_id;
+                    next_sub_id += 1;
+                    id
+                });
+                let wire_b_id = gate.wire_b.borrow().id.unwrap();
+                sub_wires_map.entry(wire_b_id).or_insert_with(|| {
+                    let id = next_sub_id;
+                    next_sub_id += 1;
+                    id
+                });
+                let wire_c_id = gate.wire_c.borrow().id.unwrap();
+                sub_wires_map.entry(wire_c_id).or_insert_with(|| {
+                    let id = next_sub_id;
+                    next_sub_id += 1;
+                    id
+                });
+            }
+            // Build the vector of sub wires
+            let sub_wires: Vec<_> = sub_wires_map
+                .keys()
+                .map(|&id| {
+                    SerializableWire {
+                        label: wires[id as usize].label,
+                        value: wires[id as usize].value,
+                    }
+                })
+                .collect();
+            let elapsed = start.elapsed();
+            info!(step = "gen_sub_wires ", elapsed = ?elapsed);
             let out = SerializableCircuit {
                 gates: w
                     .iter()
                     .map(|w| SerializableGate {
-                        wire_a: w.wire_a.borrow().clone(),
-                        wire_b: w.wire_b.borrow().clone(),
-                        wire_c: w.wire_c.borrow().clone(),
                         gate_type: w.gate_type,
+                        wire_a_id: *sub_wires_map.get(&w.wire_a.borrow().id.unwrap()).unwrap(),
+                        wire_b_id: *sub_wires_map.get(&w.wire_b.borrow().id.unwrap()).unwrap(),
+                        wire_c_id: *sub_wires_map.get(&w.wire_c.borrow().id.unwrap()).unwrap(),
                         gid: w.gid,
                     })
                     .collect(),
                 garblings: ciphertexts,
+                wires: sub_wires,
             };
             // In this demo, we only save the first sub-circuit
             if i == 0 {

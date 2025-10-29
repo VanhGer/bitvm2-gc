@@ -234,7 +234,7 @@ impl CircuitAdapter {
             if i.is_multiple_of(10_000_000) {
                 println!("wires: {} M", i / 1_000_000);
             }
-            wires.push(new_wirex());
+            wires.push(new_wirex_with_id(i as u32));
         }
         println!("init wires took:{:?}", start.elapsed());
 
@@ -303,8 +303,8 @@ impl CircuitAdapter {
 
         // The circuit output is assumed to be the last wire.
         // Using `expect` for a clearer error message if `wires` is empty.
-        let output_wire = wires.last().expect("Circuit must have at least one wire").clone();
-        Circuit::new(vec![output_wire], gates)
+        // let output_wire = wires.last().expect("Circuit must have at least one wire").clone();
+        Circuit::new(wires, gates)
     }
 }
 

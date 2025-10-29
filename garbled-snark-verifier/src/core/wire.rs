@@ -8,24 +8,27 @@ pub struct Wire {
     pub label: Option<S>,
     // evaluate
     pub value: Option<bool>,
+    // index in circuit's wires. This's only used
+    // in sub-circuit scenario.
+    pub id: Option<u32>,
 }
 
 impl Default for Wire {
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
 
 impl Wire {
     #[cfg(feature = "garbled")]
-    pub fn new() -> Self {
+    pub fn new(id: Option<u32>) -> Self {
         let label = Some(S::random());
-        Self { label, value: None }
+        Self { label, value: None, id }
     }
 
     #[cfg(not(feature = "garbled"))]
-    pub fn new() -> Self {
-        Self { label: None, value: None }
+    pub fn new(id: Option<u32>) -> Self {
+        Self { label: None, value: None, id }
     }
 
     pub fn select(&self, selector: bool) -> S {
