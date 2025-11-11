@@ -11,7 +11,10 @@ extern crate alloc;
 
 zkm_zkvm::entrypoint!(main);
 use garbled_snark_verifier::core::utils::check_guest;
+use zkm_zkvm::lib::ciphertext_check::ciphertext_check;
 fn main() {
     let buf = zkm_zkvm::io::read_vec();
-    check_guest(&buf);
+    let input = check_guest(&buf);
+    let output = ciphertext_check(&input);
+    assert!(output);
 }

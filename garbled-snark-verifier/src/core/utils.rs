@@ -217,7 +217,7 @@ impl<'a> Reader<'a> {
     }
 }
 
-pub fn check_guest(buf: &[u8]) {
+pub fn check_guest(buf: &[u8]) -> Vec<u8>  {
     let mut reader = Reader::new(buf);
     // Read the number of wires
     let num_wires = reader.read_u64() as usize;
@@ -238,6 +238,7 @@ pub fn check_guest(buf: &[u8]) {
 
     // Loop through each gate's data in the stream.
     let mut free_gates = 0;
+    let mut input = Vec::new();
     for _ in 0..num_gates {
         // Read the gate type
         let gate_type = reader.read_gate_type();
@@ -260,9 +261,14 @@ pub fn check_guest(buf: &[u8]) {
             // Read gid
             let gid = reader.read_u32();
 
-            // Immediately compute the garbling.
-            let (_, ciphertext) = gate_garbled(a0, b0, gid, gate_type);
-            computed_garblings.push(ciphertext.unwrap());
+            // Prepare input for checking the garbling
+            let a1 = a0 ^ DELTA;
+            let h1 = a1.hash_ext(gid);
+            let h0 = a0.hash_ext(gid);
+            input.extend_from_slice(&h0.0);
+            input.extend_from_slice(&h1.0);
+            input.extend_from_slice(&b0.0);
+            input.extend_from_slice(&[0_u8; LABEL_SIZE]); // placeholder for expected ciphertext
         }
     }
 
@@ -273,7 +279,9 @@ pub fn check_guest(buf: &[u8]) {
 
     // 5. Compare computed garblings with expected garblings from the stream.
     for i in 0..num_garblings {
+        let start = i * 64 + 48;
         let expected_garbling = reader.read_s();
-        assert_eq!(computed_garblings[i], expected_garbling, "Garbling mismatch at index {}", i);
+        input[start..start + LABEL_SIZE].copy_from_slice(&expected_garbling.0);
     }
+    input
 }
