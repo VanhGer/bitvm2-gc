@@ -112,13 +112,30 @@ fn main() {
     let mut stdin = ZKMStdin::new();
 
     //let ser_sc_0 = std::fs::read("garbled_0.bin").unwrap();
-    let ser_sc_0 = mem_fs::MemFile::read("garbled_0.bin").unwrap();
-    info!("ser_sc_0 size: {:?} bytes", ser_sc_0.len());
+    let sub_gates = mem_fs::MemFile::read("garbled_gates_0.bin").unwrap();
+    info!("sub_gates size: {:?} bytes", sub_gates.len());
+
+    let sub_wires = mem_fs::MemFile::read("garbled_wires_0.bin").unwrap();
+    info!("sub_wires size: {:?} bytes", sub_wires.len());
+
+    let sub_ciphertexts = mem_fs::MemFile::read("garbled_ciphertexts_0.bin").unwrap();
+    info!("sub_ciphertexts size: {:?} bytes", sub_ciphertexts.len());
+
+    // Write the read sub-circuit to a file for inspection or later use.
+    std::fs::write("garbled_gates_0.bin", &sub_gates)
+        .expect("Failed to write sub-gate to garbled_gates_0.bin");
+    std::fs::write("garbled_wires_0.bin", &sub_wires)
+        .expect("Failed to write sub-wires to garbled_wires_0.bin");
+    std::fs::write("garbled_ciphertexts_0.bin", &sub_ciphertexts)
+        .expect("Failed to write sub-ciphertexts to garbled_ciphertexts_0.bin");
+    info!("Saved sub-circuit to file");
 
     // info!("Check guest");
-    // check_guest(&ser_sc_0);
+    // garbled_snark_verifier::core::utils::check_guest(&ser_sc_0);
 
-    stdin.write_vec(ser_sc_0);
+    stdin.write_vec(sub_gates);
+    stdin.write_vec(sub_wires);
+    stdin.write_vec(sub_ciphertexts);
     // Create a `ProverClient` method.
     let client = ProverClient::new();
 

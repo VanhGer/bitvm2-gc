@@ -1,10 +1,13 @@
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use crate::mem_fs;
 use garbled_snark_verifier::bag::{Circuit, Wire};
-use garbled_snark_verifier::core::utils::{SerializableCircuit, SerializableGate, SerializableWire};
+use garbled_snark_verifier::core::utils::{serialize_to_bytes, SerializableCircuit, SerializableGate, SerializableSubCircuitGates, SerializableWire};
 use std::time::Instant;
 use tracing::info;
 use indexmap::IndexMap;
+
+pub const SUB_CIRCUIT_MAX_GATES: usize = 1_000_000;
 
 pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
     let start = Instant::now();
@@ -61,34 +64,66 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
             let elapsed = start.elapsed();
             info!(step = "gen_sub_wires ", elapsed = ?elapsed);
 
-            let out = SerializableCircuit {
-                gates: w
-                    .iter()
-                    .map(|w| SerializableGate {
-                            gate_type: w.gate_type,
-                            wire_a_id: *sub_wires_map.get(&w.wire_a.borrow().id.unwrap()).unwrap(),
-                            wire_b_id: *sub_wires_map.get(&w.wire_b.borrow().id.unwrap()).unwrap(),
-                            wire_c_id: *sub_wires_map.get(&w.wire_c.borrow().id.unwrap()).unwrap(),
-                            gid: w.gid,
-                        }
-                    )
-                    .collect(),
-                garblings: ciphertexts,
-                wires: sub_wires,
+            // let out = SerializableCircuit {
+            //     gates: w
+            //         .iter()
+            //         .map(|w| SerializableGate {
+            //                 gate_type: w.gate_type as u8,
+            //                 wire_a_id: *sub_wires_map.get(&w.wire_a.borrow().id.unwrap()).unwrap(),
+            //                 wire_b_id: *sub_wires_map.get(&w.wire_b.borrow().id.unwrap()).unwrap(),
+            //                 wire_c_id: *sub_wires_map.get(&w.wire_c.borrow().id.unwrap()).unwrap(),
+            //                 gid: w.gid,
+            //             }
+            //         )
+            //         .collect(),
+            //     ciphertexts,
+            //     wires: sub_wires,
+            // };
+
+            let gates: Vec<_> = w.iter().map(|w| SerializableGate {
+                    gate_type: w.gate_type as u8,
+                    wire_a_id: *sub_wires_map.get(&w.wire_a.borrow().id.unwrap()).unwrap(),
+                    wire_b_id: *sub_wires_map.get(&w.wire_b.borrow().id.unwrap()).unwrap(),
+                    wire_c_id: *sub_wires_map.get(&w.wire_c.borrow().id.unwrap()).unwrap(),
+                    gid: w.gid,
+                }
+            ).collect();
+            let sub_gates: SerializableSubCircuitGates<SUB_CIRCUIT_MAX_GATES> = SerializableSubCircuitGates {
+                gates: gates.try_into().unwrap(),
             };
+
+
             if i == 0 {
                 // In this demo, we only save the first sub-circuit
                 let start = Instant::now();
+                // bincode::serialize_into(
+                //     //std::fs::File::create(format!("garbled_{i}.bin")).unwrap(),
+                //     mem_fs::MemFile::create(format!("garbled_{i}.bin")).unwrap(),
+                //     &out,
+                // )
+                //     .unwrap();
+
+                /// sub_gates
+                let bytes = serialize_to_bytes(&sub_gates);
+                let mut file =  mem_fs::MemFile::create(format!("garbled_gates_{i}.bin")).unwrap();
+                file.write_all(&bytes).unwrap();
+
                 bincode::serialize_into(
-                    //std::fs::File::create(format!("garbled_{i}.bin")).unwrap(),
-                    mem_fs::MemFile::create(format!("garbled_{i}.bin")).unwrap(),
-                    &out,
+                    mem_fs::MemFile::create(format!("garbled_wires_{i}.bin")).unwrap(),
+                    &sub_wires,
                 )
                     .unwrap();
+
+                bincode::serialize_into(
+                    mem_fs::MemFile::create(format!("garbled_ciphertexts_{i}.bin")).unwrap(),
+                    &ciphertexts,
+                )
+                    .unwrap();
+
                 let elapsed = start.elapsed();
                 info!(step = "gen_sub_circuits", elapsed = ?elapsed, "Writing garbled_{i}.bin");
             }
-        },
+        }
     );
     let elapsed = start.elapsed();
     info!(step = "gen_sub_circuits", elapsed =? elapsed, "total time");
