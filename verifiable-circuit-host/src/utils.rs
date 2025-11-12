@@ -101,19 +101,20 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
 
             /// compute non-free gates ratio
             let non_free_gates = ciphertexts.len();
-            let ratio = SUB_CIRCUIT_MAX_GATES / non_free_gates;
-            let dif = {
-                if 270 > ratio {
-                    270 - ratio
-                } else {
-                    ratio - 270
+            if non_free_gates != 0 {
+                let ratio = SUB_CIRCUIT_MAX_GATES / non_free_gates;
+                let dif = {
+                    if 270 > ratio {
+                        270 - ratio
+                    } else {
+                        ratio - 270
+                    }
+                };
+                if dif < finest {
+                    finest = dif;
+                    finest_id = i;
                 }
-            };
-            if dif < finest {
-                finest = dif;
-                finest_id = i;
             }
-
 
             if i == 0 {
                 // In this demo, we only save the first sub-circuit
