@@ -94,14 +94,14 @@ pub struct SerializableCircuit {
 
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct SerializableWire {
-    pub label: Option<S>,
+    pub label: S,
     pub value: Option<bool>,
 }
 
 impl From<&Circuit> for SerializableCircuit {
     fn from(c: &Circuit) -> Self {
         let wires: Vec<SerializableWire> = c.0.iter().map(|w| SerializableWire {
-            label: w.borrow().label,
+            label: w.borrow().label.unwrap(),
             value: w.borrow().value,
         }).collect();
         let gates = c.1.iter().map(|w| SerializableGate {
@@ -120,7 +120,7 @@ impl From<&SerializableCircuit> for Circuit {
         let wires_rc: Vec<Rc<RefCell<Wire>>> = sc.wires.iter()
             .map(|w| {
                 let wire = Wire {
-                    label: w.label,
+                    label: Some(w.label),
                     value: w.value,
                     id: None,
                 };
@@ -224,7 +224,7 @@ pub fn check_guest(buf: &[u8]) -> Vec<u8>  {
     let mut wire_labels = Vec::with_capacity(num_wires);
     for _ in 0..num_wires {
         // Read the label and correctly skip the rest of the wire.
-        let label = reader.read_option_s().expect("Missing wire_a label");
+        let label = reader.read_s();
         reader.skip_option_bool();
         wire_labels.push(label);
     }
@@ -232,9 +232,6 @@ pub fn check_guest(buf: &[u8]) -> Vec<u8>  {
     // Read the number of gates from the start of the buffer.
     // bincode serializes Vec length as a u64.
     let num_gates = reader.read_u64() as usize;
-
-    // Create a vector to store the computed garblings.
-    let mut computed_garblings: Vec<S> = Vec::with_capacity(num_gates);
 
     // Loop through each gate's data in the stream.
     let mut free_gates = 0;

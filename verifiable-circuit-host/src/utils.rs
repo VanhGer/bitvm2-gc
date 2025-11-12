@@ -53,7 +53,7 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
                 .keys()
                 .map(|&id| {
                     SerializableWire {
-                        label: wires[id as usize].label,
+                        label: wires[id as usize].label.unwrap(),
                         value: wires[id as usize].value,
                     }
                 })
