@@ -19,6 +19,8 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
 
     let start = Instant::now();
     let wires: Vec<Wire> = circuit.0.iter().map(|w| w.borrow().clone()).collect();
+    let mut finest = 269;
+    let mut finest_id = 0;
     circuit.1.chunks(max_gates).enumerate().zip(garbled_gates.chunks_mut(max_gates)).for_each(
         |((i, w), garblings)| {
             info!(step = "gen_sub_circuits", "Split batch {i}/{size}");
@@ -97,6 +99,21 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
                 gates: array_gates,
             };
 
+            /// compute non-free gates ratio
+            let non_free_gates = ciphertexts.len();
+            let ratio = SUB_CIRCUIT_MAX_GATES / non_free_gates;
+            let dif = {
+                if 269 > ratio {
+                    269 - ratio
+                } else {
+                    ratio - 269
+                }
+            };
+            if dif < finest {
+                finest = dif;
+                finest_id = i;
+            }
+
 
             if i == 0 {
                 // In this demo, we only save the first sub-circuit
@@ -130,6 +147,7 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
             }
         }
     );
+    info!("finest id: {}, finest dif: {}", finest_id, finest);
     let elapsed = start.elapsed();
     info!(step = "gen_sub_circuits", elapsed =? elapsed, "total time");
 }
