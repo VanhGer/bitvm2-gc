@@ -103,10 +103,10 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
             let non_free_gates = ciphertexts.len();
             let ratio = SUB_CIRCUIT_MAX_GATES / non_free_gates;
             let dif = {
-                if 269 > ratio {
-                    269 - ratio
+                if 270 > ratio {
+                    270 - ratio
                 } else {
-                    ratio - 269
+                    ratio - 270
                 }
             };
             if dif < finest {
