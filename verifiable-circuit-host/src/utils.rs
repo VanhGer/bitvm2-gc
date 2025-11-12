@@ -7,7 +7,7 @@ use std::time::Instant;
 use tracing::info;
 use indexmap::IndexMap;
 
-pub const SUB_CIRCUIT_MAX_GATES: usize = 1_000_000;
+pub const SUB_CIRCUIT_MAX_GATES: usize = 200_000;
 
 pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
     let start = Instant::now();
@@ -80,7 +80,7 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
             //     wires: sub_wires,
             // };
 
-            let gates: Vec<_> = w.iter().map(|w| SerializableGate {
+            let mut gates: Vec<_> = w.iter().map(|w| SerializableGate {
                     gate_type: w.gate_type as u8,
                     wire_a_id: *sub_wires_map.get(&w.wire_a.borrow().id.unwrap()).unwrap(),
                     wire_b_id: *sub_wires_map.get(&w.wire_b.borrow().id.unwrap()).unwrap(),
@@ -88,8 +88,13 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
                     gid: w.gid,
                 }
             ).collect();
+            let dummy_gate = gates.last().unwrap().clone();
+            while gates.len() < SUB_CIRCUIT_MAX_GATES {
+                gates.push(dummy_gate.clone());
+            }
+            let array_gates: [SerializableGate; SUB_CIRCUIT_MAX_GATES] = gates.try_into().unwrap();
             let sub_gates: SerializableSubCircuitGates<SUB_CIRCUIT_MAX_GATES> = SerializableSubCircuitGates {
-                gates: gates.try_into().unwrap(),
+                gates: array_gates,
             };
 
 

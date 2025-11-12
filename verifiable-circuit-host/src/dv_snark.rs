@@ -5,6 +5,7 @@ use zkm_sdk::{ProverClient, ZKMProofWithPublicValues, ZKMStdin, include_elf, uti
 
 use garbled_snark_verifier::circuits::dv_snark::dv_snark_verifier_circuit;
 use garbled_snark_verifier::{bag::Circuit, circuits::sect233k1::types::load_witness_from_files};
+use crate::utils::SUB_CIRCUIT_MAX_GATES;
 
 mod mem_fs;
 mod utils;
@@ -41,7 +42,7 @@ fn split_circuit() {
     let mut circuit = custom_dv_snark_circuit();
     circuit.gate_counts().print();
     println!("Wires: {}", circuit.0.len());
-    utils::gen_sub_circuits(&mut circuit, 1_000_000);
+    utils::gen_sub_circuits(&mut circuit, SUB_CIRCUIT_MAX_GATES);
 }
 
 fn main() {

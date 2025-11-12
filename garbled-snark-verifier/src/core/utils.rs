@@ -10,7 +10,7 @@ use crate::{
 
 use std::sync::atomic::Ordering;
 
-pub const SUB_CIRCUIT_MAX_GATES: usize = 1_000_000;
+pub const SUB_CIRCUIT_MAX_GATES: usize = 200_000;
 pub const LABEL_SIZE: usize = 16;
 // FIXME: set up a private global difference
 pub static DELTA: S = S::one();

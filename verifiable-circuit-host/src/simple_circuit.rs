@@ -11,6 +11,7 @@ use garbled_snark_verifier::circuits::sect233k1::builder::{CircuitAdapter, Circu
 use garbled_snark_verifier::circuits::sect233k1::fr_ckt::Fr;
 use garbled_snark_verifier::circuits::sect233k1::fr_ref::frref_to_bits;
 use garbled_snark_verifier::core::utils::deserialize_from_bytes;
+use crate::utils::SUB_CIRCUIT_MAX_GATES;
 
 mod mem_fs;
 mod utils;
@@ -65,7 +66,7 @@ fn split_circuit() {
     let mut circuit = custom_simple_circuit();
     circuit.gate_counts().print();
     println!("Wires: {}", circuit.0.len());
-    utils::gen_sub_circuits(&mut circuit, 1_000_000);
+    utils::gen_sub_circuits(&mut circuit, SUB_CIRCUIT_MAX_GATES);
 }
 
 fn main() {
