@@ -8,8 +8,8 @@ pub struct Wire {
     pub label: Option<S>,
     // evaluate
     pub value: Option<bool>,
-    // index in circuit's wires. This's only used
-    // in sub-circuit scenario.
+    // id in sub-circuit wire list.
+    // should be removed in case of not using sub-circuits
     pub id: Option<u32>,
 }
 
