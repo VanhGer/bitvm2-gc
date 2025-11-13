@@ -117,23 +117,23 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
                 let start = Instant::now();
                 /// sub_gates
                 let bytes = serialize_to_bytes(&sub_gates);
-                let mut file =  mem_fs::MemFile::create(format!("garbled_gates.bin")).unwrap();
+                let mut file =  mem_fs::MemFile::create(format!("msm_garbled_gates.bin")).unwrap();
                 file.write_all(&bytes).unwrap();
 
                 bincode::serialize_into(
-                    mem_fs::MemFile::create(format!("garbled_wires.bin")).unwrap(),
+                    mem_fs::MemFile::create(format!("msm_garbled_wires.bin")).unwrap(),
                     &sub_wires,
                 )
                     .unwrap();
 
                 bincode::serialize_into(
-                    mem_fs::MemFile::create(format!("garbled_ciphertexts.bin")).unwrap(),
+                    mem_fs::MemFile::create(format!("msm_garbled_ciphertexts.bin")).unwrap(),
                     &ciphertexts,
                 )
                     .unwrap();
 
                 let elapsed = start.elapsed();
-                info!(step = "gen_sub_circuits", elapsed = ?elapsed, "Writing garbled_{i}");
+                info!(step = "gen_sub_circuits", elapsed = ?elapsed, "Writing msm_garbled_{i}");
             }
         }
     );
