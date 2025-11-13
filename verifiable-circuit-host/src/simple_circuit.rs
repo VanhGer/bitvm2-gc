@@ -85,22 +85,22 @@ fn main() {
     let mut stdin = ZKMStdin::new();
 
     // let ser_sc_0 = std::fs::read("garbled_0.bin").unwrap();
-    let sub_gates = mem_fs::MemFile::read("garbled_gates.bin").unwrap();
+    let sub_gates = mem_fs::MemFile::read("msm_garbled_gates.bin").unwrap();
     info!("sub_gates size: {:?} bytes", sub_gates.len());
 
-    let sub_wires = mem_fs::MemFile::read("garbled_wires.bin").unwrap();
+    let sub_wires = mem_fs::MemFile::read("msm_garbled_wires.bin").unwrap();
     info!("sub_wires size: {:?} bytes", sub_wires.len());
 
-    let sub_ciphertexts = mem_fs::MemFile::read("garbled_ciphertexts.bin").unwrap();
+    let sub_ciphertexts = mem_fs::MemFile::read("msm_garbled_ciphertexts.bin").unwrap();
     info!("sub_ciphertexts size: {:?} bytes", sub_ciphertexts.len());
 
     // Write the read sub-circuit to a file for inspection or later use.
-    std::fs::write("garbled_gates.bin", &sub_gates)
-        .expect("Failed to write sub-gate to garbled_gates.bin");
-    std::fs::write("garbled_wires.bin", &sub_wires)
-        .expect("Failed to write sub-wires to garbled_wires.bin");
-    std::fs::write("garbled_ciphertexts.bin", &sub_ciphertexts)
-        .expect("Failed to write sub-ciphertexts to garbled_ciphertexts.bin");
+    std::fs::write("msm_garbled_gates.bin", &sub_gates)
+        .expect("Failed to write sub-gate to msm_garbled_gates.bin");
+    std::fs::write("msm_garbled_wires.bin", &sub_wires)
+        .expect("Failed to write sub-wires to msm_garbled_wires.bin");
+    std::fs::write("msm_garbled_ciphertexts.bin", &sub_ciphertexts)
+        .expect("Failed to write sub-ciphertexts to msm_garbled_ciphertexts.bin");
     info!("Saved sub-circuit to file");
 
     // info!("Check guest");

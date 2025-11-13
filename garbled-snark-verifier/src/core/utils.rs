@@ -240,13 +240,10 @@ pub fn check_guest(
     }
 
     // read sub_ciphertexts:
-    let mut c_reader = Reader::new(sub_ciphertexts);
-    let num_ciphertexts = c_reader.read_u64() as usize;
-    let mut ciphertexts = Vec::with_capacity(num_ciphertexts);
-    for _ in 0..num_ciphertexts {
-        let ct = c_reader.read_s();
-        ciphertexts.push(ct);
-    }
+
+    let mut c_start = 0;
+    let num_ciphertexts = u64::from_le_bytes(sub_ciphertexts[c_start..c_start + 8].try_into().unwrap());
+    c_start += 8;
 
     // create input for ciphertext check syscall
     let mut input = Vec::new();
@@ -262,10 +259,11 @@ pub fn check_guest(
             input.extend_from_slice(&h0.0);
             input.extend_from_slice(&h1.0);
             input.extend_from_slice(&b0.0);
-            input.extend_from_slice(&ciphertexts[index].0);
+            input.extend_from_slice(&sub_ciphertexts[c_start..c_start + LABEL_SIZE]);
             index += 1;
+            c_start += LABEL_SIZE;
         }
     }
-    assert_eq!(index, ciphertexts.len());
+    assert_eq!(index, num_ciphertexts);
     input
 }
