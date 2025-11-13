@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use crate::mem_fs;
 use garbled_snark_verifier::bag::{Circuit, Wire};
@@ -7,7 +8,7 @@ use tracing::info;
 use indexmap::IndexMap;
 
 pub const SUB_CIRCUIT_MAX_GATES: usize = 200_000;
-pub const FINEST_RATIO_TARGET: usize = 270; // gates / non-free gates
+pub const FINEST_RATIO_TARGET: usize = 503; // gates / non-free gates
 
 pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
     let start = Instant::now();
@@ -18,13 +19,10 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
     let size = circuit.1.len().div_ceil(max_gates);
 
     let start = Instant::now();
-
     let wires: Vec<Wire> = circuit.0.iter().map(|w| w.borrow().clone()).collect();
     let mut finest = FINEST_RATIO_TARGET;
     let mut finest_id = 0;
-
     /// find the sub-circuit with the finest non-free gates ratio
-    let wires: Vec<Wire> = circuit.0.iter().map(|w| w.borrow().clone()).collect();
     circuit.1.chunks(max_gates).enumerate().zip(garbled_gates.chunks_mut(max_gates)).for_each(
         |((i, w), garblings)| {
             info!(step = "gen_sub_circuits", "Split batch {i}/{size}");
@@ -51,7 +49,6 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
             }
         }
     );
-
     info!("finest id: {}, finest dif: {}", finest_id, finest);
     // dump subcircuit with the finest ratio
     circuit.1.chunks(max_gates).enumerate().zip(garbled_gates.chunks_mut(max_gates)).for_each(
@@ -62,6 +59,7 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
                     .iter()
                     .filter_map(|g| g.as_ref().cloned())
                     .collect();
+
                 // All of this should be removed.
                 let start = Instant::now();
                 let mut sub_wires_map: IndexMap<u32, u32> = IndexMap::new();
@@ -115,10 +113,11 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
                 let sub_gates: SerializableSubCircuitGates<SUB_CIRCUIT_MAX_GATES> = SerializableSubCircuitGates {
                     gates: array_gates,
                 };
+
                 let start = Instant::now();
                 /// sub_gates
                 let bytes = serialize_to_bytes(&sub_gates);
-                let mut file = mem_fs::MemFile::create(format!("garbled_gates.bin")).unwrap();
+                let mut file =  mem_fs::MemFile::create(format!("garbled_gates.bin")).unwrap();
                 file.write_all(&bytes).unwrap();
 
                 bincode::serialize_into(
@@ -132,11 +131,13 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
                     &ciphertexts,
                 )
                     .unwrap();
+
                 let elapsed = start.elapsed();
                 info!(step = "gen_sub_circuits", elapsed = ?elapsed, "Writing garbled_{i}");
             }
         }
     );
+
     let elapsed = start.elapsed();
     info!(step = "gen_sub_circuits", elapsed =? elapsed, "total time");
 }

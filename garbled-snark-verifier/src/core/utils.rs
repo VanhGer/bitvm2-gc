@@ -120,7 +120,7 @@ pub struct SerializableWire {
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct SerializableCircuit {
     pub wires: Vec<SerializableWire>,
-    pub gates: Vec<SerializableGate>, // Must also be serializable
+    pub gates: Vec<SerializableGate>,
     pub ciphertexts: Vec<S>,
 }
 
@@ -151,7 +151,9 @@ impl From<&SerializableCircuit> for Circuit {
                     id: None,
                 };
                 Rc::new(RefCell::new(wire))
-            }).collect();
+            })
+            .collect();
+
         let gates = sc.gates.iter().map(|g| {
             let a = wires_rc[g.wire_a_id as usize].clone();
             let b = wires_rc[g.wire_b_id as usize].clone();
@@ -186,13 +188,6 @@ impl<'a> Reader<'a> {
         b
     }
 
-    fn read_u32(&mut self) -> u32 {
-        let start = self.cursor;
-        let v = u32::from_le_bytes(self.buf[start..start + 4].try_into().unwrap());
-        self.cursor += 4;
-        v
-    }
-
     fn read_u64(&mut self) -> u64 {
         let start = self.cursor;
         let v = u64::from_le_bytes(self.buf[start..start + 8].try_into().unwrap());
@@ -224,7 +219,6 @@ impl<'a> Reader<'a> {
     fn skip_wire_id(&mut self) {
         self.cursor += 4;
     }
-
 }
 
 pub fn check_guest(
