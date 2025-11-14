@@ -159,27 +159,17 @@ pub fn check_guest(
             let start_a0 = base + (gate.wire_a_id as usize) * LABEL_SIZE;
             let start_b0 = base + (gate.wire_b_id as usize) * LABEL_SIZE;
 
-            let gid_bytes = gate.gid.to_le_bytes();
+            let a0 = S(sub_wires[start_a0..start_a0 + LABEL_SIZE].try_into().unwrap());
+            let gid = gate.gid;
+            let a1 = a0 ^ DELTA;
 
-            // a0 + gid
-            let mut buf = [0u8; LABEL_SIZE + 4];
-            buf[..LABEL_SIZE].copy_from_slice(&sub_wires[start_a0..start_a0 + LABEL_SIZE]);
-            buf[LABEL_SIZE..].copy_from_slice(&gid_bytes);
-            let h0 = hash(&buf);
+            let h0 = a0.hash_ext(gid);
+            let h1 = a1.hash_ext(gid);
 
-            // xor to compute a1.
-            for j in 0..LABEL_SIZE {
-                buf[j] ^= DELTA.0[j];
-            }
-            let h1 = hash(&buf);
-
-            input.extend_from_slice(&h0);
-            input.extend_from_slice(&h1);
+            input.extend_from_slice(&h0.0);
+            input.extend_from_slice(&h1.0);
             input.extend_from_slice(&sub_wires[start_b0..start_b0 + LABEL_SIZE]);
             input.extend_from_slice(&sub_ciphertexts[c_start..c_start + LABEL_SIZE]);
-
-
-
             index += 1;
             c_start += LABEL_SIZE;
         }
