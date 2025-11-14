@@ -90,7 +90,7 @@ fn main() {
     // garbled_snark_verifier::core::utils::check_guest(&ser_sc_0);
 
     for i in 0..SUB_INPUT_GATES_PARTS {
-        stdin.write_vec(sub_gates[i]);
+        stdin.write_vec(sub_gates[i].clone());
     }
     stdin.write_vec(sub_wires);
     stdin.write_vec(sub_ciphertexts);

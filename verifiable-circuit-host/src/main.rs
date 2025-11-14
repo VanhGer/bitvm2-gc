@@ -8,7 +8,7 @@ use ark_std::{UniformRand, test_rng};
 use garbled_snark_verifier::{
     bag::{Circuit, new_wirex},
     circuits::bn254::{fq2::Fq2, g2::G2Affine, pairing::deserialize_compressed_g2_circuit},
-    core::utils::{SerializableCircuit, SerializableGate},
+    core::utils::SerializableGate,
 };
 use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha12Rng;
