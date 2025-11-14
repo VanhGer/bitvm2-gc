@@ -117,107 +117,22 @@ pub struct SerializableWire {
     pub value: Option<bool>,
 }
 
+#[repr(C)]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
-pub struct SerializableCircuit {
-    pub wires: Vec<SerializableWire>,
-    pub gates: Vec<SerializableGate>,
-    pub ciphertexts: Vec<S>,
+pub struct SerializableSubWires {
+    pub labels: Vec<S>,
+    pub value: Vec<Option<bool>>,
 }
 
-impl From<&Circuit> for SerializableCircuit {
-    fn from(c: &Circuit) -> Self {
-        let wires: Vec<SerializableWire> = c.0.iter().map(|w| SerializableWire {
-            label: w.borrow().label.unwrap(),
-            value: w.borrow().value,
-        }).collect();
-        let gates = c.1.iter().map(|w| SerializableGate {
-            gate_type: w.gate_type as u8,
-            wire_a_id: w.wire_a.borrow().id.unwrap(),
-            wire_b_id: w.wire_b.borrow().id.unwrap(),
-            wire_c_id: w.wire_c.borrow().id.unwrap(),
-            gid: w.gid,
-        }).collect();
-        Self { gates, ciphertexts: Vec::new(), wires }
-    }
-}
-
-impl From<&SerializableCircuit> for Circuit {
-    fn from(sc: &SerializableCircuit) -> Self {
-        let wires_rc: Vec<Rc<RefCell<Wire>>> = sc.wires.iter()
-            .map(|w| {
-                let wire = Wire {
-                    label: Some(w.label),
-                    value: w.value,
-                    id: None,
-                };
-                Rc::new(RefCell::new(wire))
-            })
-            .collect();
-
-        let gates = sc.gates.iter().map(|g| {
-            let a = wires_rc[g.wire_a_id as usize].clone();
-            let b = wires_rc[g.wire_b_id as usize].clone();
-            let c = wires_rc[g.wire_c_id as usize].clone();
-            Gate {
-                wire_a: a,
-                wire_b: b,
-                wire_c: c,
-                gate_type: GateType::try_from(g.gate_type).unwrap(),
-                gid: g.gid,
-            }
-        }).collect();
-
-        Self(wires_rc, gates)
-    }
-}
-
-struct Reader<'a> {
-    buf: &'a [u8],
-    cursor: usize,
-}
-
-impl<'a> Reader<'a> {
-    pub fn new(buf: &'a [u8]) -> Self {
-        Reader { buf, cursor: 0 }
-    }
-
-    #[inline(always)]
-    fn read_u8(&mut self) -> u8 {
-        let b = self.buf[self.cursor];
-        self.cursor += 1;
-        b
-    }
-
-    fn read_u64(&mut self) -> u64 {
-        let start = self.cursor;
-        let v = u64::from_le_bytes(self.buf[start..start + 8].try_into().unwrap());
-        self.cursor += 8;
-        v
-    }
-
-    #[inline(always)]
-    fn read_s(&mut self) -> S {
-        let mut arr = [0u8; LABEL_SIZE];
-        arr.copy_from_slice(&self.buf[self.cursor..self.cursor + LABEL_SIZE]);
-        self.cursor += LABEL_SIZE;
-        S(arr)
-    }
-
-    #[inline(always)]
-    fn skip_option_bool(&mut self) {
-        if self.read_u8() != 0 {
-            self.cursor += 1;
+impl SerializableSubWires {
+    pub fn from_serialzable_wires(wires: &[SerializableWire]) -> Self {
+        let mut labels = vec![S::one(); wires.len()];
+        let mut value = vec![None; wires.len()];
+        for i in 0..wires.len() {
+            labels[i] = wires[i].label;
+            value[i] = wires[i].value;
         }
-    }
-
-    #[inline(always)]
-    fn skip_wires_and_gid(&mut self) {
-        self.cursor += 4 * 4;
-    }
-
-    #[inline(always)]
-    fn skip_wire_id(&mut self) {
-        self.cursor += 4;
+        SerializableSubWires { labels, value }
     }
 }
 
@@ -225,22 +140,10 @@ pub fn check_guest(
     sub_gates: &[u8],
     sub_wires: &[u8],
     sub_ciphertexts: &[u8],
-) -> Vec<u8> {
+) -> Vec<u8>  {
     let sub_gates: SerializableSubCircuitGates<SUB_CIRCUIT_MAX_GATES> = deserialize_from_bytes(&sub_gates);
 
-    // read sub_wires:
-    let mut wires_reader = Reader::new(sub_wires);
-    let num_wires = wires_reader.read_u64() as usize;
-    let mut wire_labels = Vec::with_capacity(num_wires);
-    for _ in 0..num_wires {
-        // Read the label and correctly skip the rest of the wire.
-        let label = wires_reader.read_s();
-        wires_reader.skip_option_bool();
-        wire_labels.push(label);
-    }
-
     // read sub_ciphertexts:
-
     let mut c_start = 0;
     let num_ciphertexts = u64::from_le_bytes(sub_ciphertexts[c_start..c_start + 8].try_into().unwrap());
     c_start += 8;
@@ -250,15 +153,21 @@ pub fn check_guest(
     let mut index = 0;
     for i in 0..sub_gates.gates.len() {
         if sub_gates.gates[i].gate_type == 0 { // and gate
-            let a0 = wire_labels[sub_gates.gates[i].wire_a_id as usize];
-            let b0 = wire_labels[sub_gates.gates[i].wire_b_id as usize];
-            let gid = sub_gates.gates[i].gid;
+            let gate = &sub_gates.gates[i];
+            let base = 8usize;
+            let start_a0 = base + (gate.wire_a_id as usize) * LABEL_SIZE;
+            let start_b0 = base + (gate.wire_b_id as usize) * LABEL_SIZE;
+
+            let a0 = S(sub_wires[start_a0..start_a0 + LABEL_SIZE].try_into().unwrap());
+            let gid = gate.gid;
             let a1 = a0 ^ DELTA;
-            let h1 = a1.hash_ext(gid);
+
             let h0 = a0.hash_ext(gid);
+            let h1 = a1.hash_ext(gid);
+
             input.extend_from_slice(&h0.0);
             input.extend_from_slice(&h1.0);
-            input.extend_from_slice(&b0.0);
+            input.extend_from_slice(&sub_wires[start_b0..start_b0 + LABEL_SIZE]);
             input.extend_from_slice(&sub_ciphertexts[c_start..c_start + LABEL_SIZE]);
             index += 1;
             c_start += LABEL_SIZE;

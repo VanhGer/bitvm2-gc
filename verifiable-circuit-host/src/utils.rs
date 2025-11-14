@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use crate::mem_fs;
 use garbled_snark_verifier::bag::{Circuit, Wire};
-use garbled_snark_verifier::core::utils::{serialize_to_bytes, SerializableCircuit, SerializableGate, SerializableSubCircuitGates, SerializableWire};
+use garbled_snark_verifier::core::utils::{serialize_to_bytes, SerializableGate, SerializableSubCircuitGates, SerializableSubWires, SerializableWire};
 use std::time::Instant;
 use tracing::info;
 use indexmap::IndexMap;
@@ -85,7 +85,7 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
                     });
                 }
                 // Build the vector of sub wires
-                let sub_wires: Vec<_> = sub_wires_map
+                let serialziable_wires: Vec<_> = sub_wires_map
                     .keys()
                     .map(|&id| {
                         SerializableWire {
@@ -94,6 +94,7 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
                         }
                     })
                     .collect();
+                let sub_wires = SerializableSubWires::from_serialzable_wires(&serialziable_wires);
                 let elapsed = start.elapsed();
                 info!(step = "gen_sub_wires ", elapsed = ?elapsed);
 
