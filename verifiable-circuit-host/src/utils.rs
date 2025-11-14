@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use crate::mem_fs;
 use garbled_snark_verifier::bag::{Circuit, Wire};
-use garbled_snark_verifier::core::utils::{serialize_to_bytes, SerializableCircuit, SerializableGate, SerializableSubCircuitGates, SerializableWire};
+use garbled_snark_verifier::core::utils::{serialize_to_bytes, SerializableGate, SerializableSubCircuitGates, SerializableWire};
 use std::time::Instant;
 use tracing::info;
 use indexmap::IndexMap;
