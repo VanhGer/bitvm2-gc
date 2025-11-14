@@ -118,6 +118,25 @@ pub struct SerializableWire {
     pub value: Option<bool>,
 }
 
+#[repr(C)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
+pub struct SerializableSubWires {
+    pub labels: Vec<S>,
+    pub value: Vec<Option<bool>>,
+}
+
+impl SerializableSubWires {
+    pub fn from_serialzable_wires(wires: &[SerializableWire]) -> Self {
+        let mut labels = Vec::with_capacity(wires.len());
+        let mut value = Vec::with_capacity(wires.len());
+        for wire in wires {
+            labels.push(wire.label);
+            value.push(wire.value);
+        }
+        SerializableSubWires { labels, value }
+    }
+}
+
 struct Reader<'a> {
     buf: &'a [u8],
     cursor: usize,
@@ -182,17 +201,6 @@ pub fn check_guest(
 ) -> Vec<u8>  {
     let sub_gates: SerializableSubCircuitGates<SUB_CIRCUIT_MAX_GATES> = deserialize_from_bytes(&sub_gates);
 
-    // read sub_wires:
-    let mut wires_reader = Reader::new(sub_wires);
-    let num_wires = wires_reader.read_u64() as usize;
-    let mut wire_labels = Vec::with_capacity(num_wires);
-    for _ in 0..num_wires {
-        // Read the label and correctly skip the rest of the wire.
-        let label = wires_reader.read_s();
-        wires_reader.skip_option_bool();
-        wire_labels.push(label);
-    }
-
     // read sub_ciphertexts:
     let mut c_start = 0;
     let num_ciphertexts = u64::from_le_bytes(sub_ciphertexts[c_start..c_start + 8].try_into().unwrap());
@@ -203,8 +211,10 @@ pub fn check_guest(
     let mut index = 0;
     for i in 0..sub_gates.gates.len() {
         if sub_gates.gates[i].gate_type == 0 { // and gate
-            let a0 = wire_labels[sub_gates.gates[i].wire_a_id as usize];
-            let b0 = wire_labels[sub_gates.gates[i].wire_b_id as usize];
+            let start_a0 = 8 + (sub_gates.gates[i].wire_a_id as usize) * LABEL_SIZE;
+            let start_b0 = 8 + (sub_gates.gates[i].wire_b_id as usize) * LABEL_SIZE;
+            let a0 = S(sub_wires[start_a0..start_a0 + LABEL_SIZE].try_into().unwrap());
+            let b0 = S(sub_wires[start_b0..start_b0 + LABEL_SIZE].try_into().unwrap());
             let gid = sub_gates.gates[i].gid;
             let a1 = a0 ^ DELTA;
             let h1 = a1.hash_ext(gid);

@@ -62,12 +62,15 @@ fn main() {
 
     // let ser_sc_0 = std::fs::read("garbled.bin").unwrap();
     let sub_gates = mem_fs::MemFile::read("garbled_gates.bin").unwrap();
+    // let sub_gates = std::fs::read("garbled_gates.bin").unwrap();
     info!("sub_gates size: {:?} bytes", sub_gates.len());
 
     let sub_wires = mem_fs::MemFile::read("garbled_wires.bin").unwrap();
+    // let sub_wires = std::fs::read("garbled_wires.bin").unwrap();
     info!("sub_wires size: {:?} bytes", sub_wires.len());
 
     let sub_ciphertexts = mem_fs::MemFile::read("garbled_ciphertexts.bin").unwrap();
+    // let sub_ciphertexts = std::fs::read("garbled_ciphertexts.bin").unwrap();
     info!("sub_ciphertexts size: {:?} bytes", sub_ciphertexts.len());
 
     // Write the read sub-circuit to a file for inspection or later use.
