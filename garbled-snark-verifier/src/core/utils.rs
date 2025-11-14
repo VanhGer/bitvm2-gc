@@ -137,63 +137,6 @@ impl SerializableSubWires {
     }
 }
 
-struct Reader<'a> {
-    buf: &'a [u8],
-    cursor: usize,
-}
-
-impl<'a> Reader<'a> {
-    pub fn new(buf: &'a [u8]) -> Self {
-        Reader { buf, cursor: 0 }
-    }
-
-    #[inline(always)]
-    fn read_u8(&mut self) -> u8 {
-        let b = self.buf[self.cursor];
-        self.cursor += 1;
-        b
-    }
-
-    fn read_u32(&mut self) -> u32 {
-        let start = self.cursor;
-        let v = u32::from_le_bytes(self.buf[start..start + 4].try_into().unwrap());
-        self.cursor += 4;
-        v
-    }
-
-    fn read_u64(&mut self) -> u64 {
-        let start = self.cursor;
-        let v = u64::from_le_bytes(self.buf[start..start + 8].try_into().unwrap());
-        self.cursor += 8;
-        v
-    }
-
-    #[inline(always)]
-    fn read_s(&mut self) -> S {
-        let mut arr = [0u8; LABEL_SIZE];
-        arr.copy_from_slice(&self.buf[self.cursor..self.cursor + LABEL_SIZE]);
-        self.cursor += LABEL_SIZE;
-        S(arr)
-    }
-
-    #[inline(always)]
-    fn skip_option_bool(&mut self) {
-        if self.read_u8() != 0 {
-            self.cursor += 1;
-        }
-    }
-
-    #[inline(always)]
-    fn skip_wires_and_gid(&mut self) {
-        self.cursor += 4 * 4;
-    }
-
-    #[inline(always)]
-    fn skip_wire_id(&mut self) {
-        self.cursor += 4;
-    }
-}
-
 pub fn check_guest(
     sub_gates: &[u8],
     sub_wires: &[u8],
@@ -211,18 +154,32 @@ pub fn check_guest(
     let mut index = 0;
     for i in 0..sub_gates.gates.len() {
         if sub_gates.gates[i].gate_type == 0 { // and gate
-            let start_a0 = 8 + (sub_gates.gates[i].wire_a_id as usize) * LABEL_SIZE;
-            let start_b0 = 8 + (sub_gates.gates[i].wire_b_id as usize) * LABEL_SIZE;
-            let a0 = S(sub_wires[start_a0..start_a0 + LABEL_SIZE].try_into().unwrap());
-            let b0 = S(sub_wires[start_b0..start_b0 + LABEL_SIZE].try_into().unwrap());
-            let gid = sub_gates.gates[i].gid;
-            let a1 = a0 ^ DELTA;
-            let h1 = a1.hash_ext(gid);
-            let h0 = a0.hash_ext(gid);
-            input.extend_from_slice(&h0.0);
-            input.extend_from_slice(&h1.0);
-            input.extend_from_slice(&b0.0);
+            let gate = &sub_gates.gates[i];
+            let base = 8usize;
+            let start_a0 = base + (gate.wire_a_id as usize) * LABEL_SIZE;
+            let start_b0 = base + (gate.wire_b_id as usize) * LABEL_SIZE;
+
+            let gid_bytes = gate.gid.to_le_bytes();
+
+            // a0 + gid
+            let mut buf = [0u8; LABEL_SIZE + 4];
+            buf[..LABEL_SIZE].copy_from_slice(&sub_wires[start_a0..start_a0 + LABEL_SIZE]);
+            buf[LABEL_SIZE..].copy_from_slice(&gid_bytes);
+            let h0 = hash(&buf);
+
+            // xor to compute a1.
+            for j in 0..LABEL_SIZE {
+                buf[j] ^= DELTA.0[j];
+            }
+            let h1 = hash(&buf);
+
+            input.extend_from_slice(&h0);
+            input.extend_from_slice(&h1);
+            input.extend_from_slice(&sub_wires[start_b0..start_b0 + LABEL_SIZE]);
             input.extend_from_slice(&sub_ciphertexts[c_start..c_start + LABEL_SIZE]);
+
+
+
             index += 1;
             c_start += LABEL_SIZE;
         }
