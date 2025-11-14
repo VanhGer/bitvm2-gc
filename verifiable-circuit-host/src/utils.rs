@@ -7,7 +7,9 @@ use std::time::Instant;
 use tracing::info;
 use indexmap::IndexMap;
 
-pub const SUB_CIRCUIT_MAX_GATES: usize = 200_000;
+pub const SUB_CIRCUIT_MAX_GATES: usize = 1_000_000;
+pub const SUB_INPUT_GATES_PART_SIZE: usize = 200_000;
+pub const SUB_INPUT_GATES_PARTS: usize = 5;
 pub const FINEST_RATIO_TARGET: usize = 503; // gates / non-free gates
 
 pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
@@ -94,6 +96,7 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
                         }
                     })
                     .collect();
+
                 let sub_wires = SerializableSubWires::from_serialzable_wires(&serialziable_wires);
                 let elapsed = start.elapsed();
                 info!(step = "gen_sub_wires ", elapsed = ?elapsed);
@@ -106,20 +109,33 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
                     gid: w.gid,
                 }
                 ).collect();
-                let dummy_gate = gates.last().unwrap().clone();
+                let last_gate = gates.last().unwrap().clone();
+                let dummy_gate = SerializableGate {
+                    gate_type: 8,
+                    wire_a_id: last_gate.wire_a_id,
+                    wire_b_id: last_gate.wire_b_id,
+                    wire_c_id: last_gate.wire_c_id,
+                    gid: last_gate.gid,
+                };
                 while gates.len() < SUB_CIRCUIT_MAX_GATES {
                     gates.push(dummy_gate.clone());
                 }
-                let array_gates: [SerializableGate; SUB_CIRCUIT_MAX_GATES] = gates.try_into().unwrap();
-                let sub_gates: SerializableSubCircuitGates<SUB_CIRCUIT_MAX_GATES> = SerializableSubCircuitGates {
-                    gates: array_gates,
-                };
 
-                let start = Instant::now();
-                /// sub_gates
-                let bytes = serialize_to_bytes(&sub_gates);
-                let mut file =  mem_fs::MemFile::create(format!("msm_garbled_gates.bin")).unwrap();
-                file.write_all(&bytes).unwrap();
+                for part in 0..SUB_INPUT_GATES_PARTS {
+                    let start = part * SUB_INPUT_GATES_PART_SIZE;
+                    let end = start + SUB_INPUT_GATES_PART_SIZE;
+                    let mut array_gates: [SerializableGate; SUB_INPUT_GATES_PART_SIZE] = [SerializableGate::default(); SUB_INPUT_GATES_PART_SIZE];
+                    array_gates.copy_from_slice(&gates[start..end]);
+
+                    let sub_gates: SerializableSubCircuitGates<SUB_INPUT_GATES_PART_SIZE> = SerializableSubCircuitGates {
+                        gates: array_gates,
+                    };
+
+                    // serialize each sub-gate array to its own file
+                    let bytes = serialize_to_bytes(&sub_gates);
+                    let mut file = mem_fs::MemFile::create(format!("msm_garbled_gates_{}.bin", part)).unwrap();
+                    file.write_all(&bytes).unwrap();
+                }
 
                 bincode::serialize_into(
                     mem_fs::MemFile::create(format!("msm_garbled_wires.bin")).unwrap(),
@@ -134,7 +150,7 @@ pub fn gen_sub_circuits(circuit: &mut Circuit, max_gates: usize) {
                     .unwrap();
 
                 let elapsed = start.elapsed();
-                info!(step = "gen_sub_circuits", elapsed = ?elapsed, "Writing msm_garbled_{i}");
+                info!(step = "gen_sub_circuits", elapsed = ?elapsed, "Writing garbled_{i}");
             }
         }
     );

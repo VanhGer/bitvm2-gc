@@ -10,10 +10,15 @@
 extern crate alloc;
 
 zkm_zkvm::entrypoint!(main);
-use garbled_snark_verifier::core::utils::check_guest;
+
+use alloc::vec::Vec;
+use garbled_snark_verifier::core::utils::{check_guest, SUB_INPUT_GATES_PARTS};
 use zkm_zkvm::lib::ciphertext_check::ciphertext_check;
 fn main() {
-    let sub_gates = zkm_zkvm::io::read_vec();
+    let mut sub_gates: [Vec<u8>; SUB_INPUT_GATES_PARTS] = core::array::from_fn(|_| Vec::new());
+    for i in 0..SUB_INPUT_GATES_PARTS {
+        sub_gates[i] = zkm_zkvm::io::read_vec();
+    }
     let sub_wires = zkm_zkvm::io::read_vec();
     let sub_ciphertexts = zkm_zkvm::io::read_vec();
     let input = check_guest(&sub_gates, &sub_wires, &sub_ciphertexts);
