@@ -11,7 +11,7 @@ use garbled_snark_verifier::circuits::sect233k1::builder::{CircuitAdapter, Circu
 use garbled_snark_verifier::circuits::sect233k1::fr_ckt::Fr;
 use garbled_snark_verifier::circuits::sect233k1::fr_ref::frref_to_bits;
 use garbled_snark_verifier::core::utils::deserialize_from_bytes;
-use crate::utils::SUB_CIRCUIT_MAX_GATES;
+use crate::utils::{SUB_CIRCUIT_MAX_GATES, SUB_INPUT_GATES_PARTS};
 
 mod mem_fs;
 mod utils;
@@ -84,19 +84,27 @@ fn main() {
     // types of the elements in the input stream must match the types being read in the guest.
     let mut stdin = ZKMStdin::new();
 
-    // let ser_sc_0 = std::fs::read("garbled_0.bin").unwrap();
-    let sub_gates = mem_fs::MemFile::read("garbled_gates.bin").unwrap();
-    info!("sub_gates size: {:?} bytes", sub_gates.len());
+    let mut sub_gates: [Vec<u8>; SUB_INPUT_GATES_PARTS] =
+        std::array::from_fn(|_| Vec::new());
 
+    for part in 0..SUB_INPUT_GATES_PARTS {
+        sub_gates[part] = mem_fs::MemFile::read(format!("garbled_gates_{}.bin", part)).unwrap();
+        // sub_gates = std::fs::read(format!("garbled_gates_{}.bin", part)).unwrap();
+        info!("sub_gates part {} size: {:?} bytes", part, sub_gates[part].len());
+    }
     let sub_wires = mem_fs::MemFile::read("garbled_wires.bin").unwrap();
+    // let sub_wires = std::fs::read("garbled_wires.bin").unwrap();
     info!("sub_wires size: {:?} bytes", sub_wires.len());
 
     let sub_ciphertexts = mem_fs::MemFile::read("garbled_ciphertexts.bin").unwrap();
+    // let sub_ciphertexts = std::fs::read("garbled_ciphertexts.bin").unwrap();
     info!("sub_ciphertexts size: {:?} bytes", sub_ciphertexts.len());
 
     // Write the read sub-circuit to a file for inspection or later use.
-    std::fs::write("garbled_gates.bin", &sub_gates)
-        .expect("Failed to write sub-gate to garbled_gates.bin");
+    for part in 0..SUB_INPUT_GATES_PARTS {
+        std::fs::write(format!("garbled_gates_{}.bin", part), &sub_gates[part])
+            .expect("Failed to write sub-gate to garbled_gates.bin");
+    }
     std::fs::write("garbled_wires.bin", &sub_wires)
         .expect("Failed to write sub-wires to garbled_wires.bin");
     std::fs::write("garbled_ciphertexts.bin", &sub_ciphertexts)
@@ -106,9 +114,12 @@ fn main() {
     // info!("Check guest");
     // garbled_snark_verifier::core::utils::check_guest(&ser_sc_0);
 
-    stdin.write_vec(sub_gates);
+    for i in 0..SUB_INPUT_GATES_PARTS {
+        stdin.write_vec(sub_gates[i].clone());
+    }
     stdin.write_vec(sub_wires);
     stdin.write_vec(sub_ciphertexts);
+
     // Create a `ProverClient` method.
     let client = ProverClient::new();
 

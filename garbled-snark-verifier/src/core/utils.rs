@@ -10,7 +10,9 @@ use crate::{
 
 use std::sync::atomic::Ordering;
 
-pub const SUB_CIRCUIT_MAX_GATES: usize = 200_000;
+pub const SUB_CIRCUIT_MAX_GATES: usize = 1_000_000;
+pub const SUB_INPUT_GATES_PART_SIZE: usize = 200_000;
+pub const SUB_INPUT_GATES_PARTS: usize = 5;
 pub const LABEL_SIZE: usize = 16;
 // FIXME: set up a private global difference
 pub static DELTA: S = S::one();
@@ -79,7 +81,7 @@ pub fn hash(input: &[u8]) -> [u8; LABEL_SIZE] {
 }
 
 #[repr(C)]
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct SerializableGate {
     pub gate_type: u8,
     pub wire_a_id: u32,
@@ -138,12 +140,10 @@ impl SerializableSubWires {
 }
 
 pub fn check_guest(
-    sub_gates: &[u8],
+    sub_gates_parts: &[Vec<u8>; SUB_INPUT_GATES_PARTS],
     sub_wires: &[u8],
     sub_ciphertexts: &[u8],
 ) -> Vec<u8>  {
-    let sub_gates: SerializableSubCircuitGates<SUB_CIRCUIT_MAX_GATES> = deserialize_from_bytes(&sub_gates);
-
     // read sub_ciphertexts:
     let mut c_start = 0;
     let num_ciphertexts = u64::from_le_bytes(sub_ciphertexts[c_start..c_start + 8].try_into().unwrap());
@@ -152,26 +152,29 @@ pub fn check_guest(
     // create input for ciphertext check syscall
     let mut input = Vec::new();
     let mut index = 0;
-    for i in 0..sub_gates.gates.len() {
-        if sub_gates.gates[i].gate_type == 0 { // and gate
-            let gate = &sub_gates.gates[i];
-            let base = 8usize;
-            let start_a0 = base + (gate.wire_a_id as usize) * LABEL_SIZE;
-            let start_b0 = base + (gate.wire_b_id as usize) * LABEL_SIZE;
+    for part in 0..SUB_INPUT_GATES_PARTS {
+        let sub_gates: SerializableSubCircuitGates<SUB_INPUT_GATES_PART_SIZE> = deserialize_from_bytes(&sub_gates_parts[part]);
+        for i in 0..sub_gates.gates.len() {
+            if sub_gates.gates[i].gate_type == 0 { // and gate
+                let gate = &sub_gates.gates[i];
+                let base = 8usize;
+                let start_a0 = base + (gate.wire_a_id as usize) * LABEL_SIZE;
+                let start_b0 = base + (gate.wire_b_id as usize) * LABEL_SIZE;
 
-            let a0 = S(sub_wires[start_a0..start_a0 + LABEL_SIZE].try_into().unwrap());
-            let gid = gate.gid;
-            let a1 = a0 ^ DELTA;
+                let a0 = S(sub_wires[start_a0..start_a0 + LABEL_SIZE].try_into().unwrap());
+                let gid = gate.gid;
+                let a1 = a0 ^ DELTA;
 
-            let h0 = a0.hash_ext(gid);
-            let h1 = a1.hash_ext(gid);
+                let h0 = a0.hash_ext(gid);
+                let h1 = a1.hash_ext(gid);
 
-            input.extend_from_slice(&h0.0);
-            input.extend_from_slice(&h1.0);
-            input.extend_from_slice(&sub_wires[start_b0..start_b0 + LABEL_SIZE]);
-            input.extend_from_slice(&sub_ciphertexts[c_start..c_start + LABEL_SIZE]);
-            index += 1;
-            c_start += LABEL_SIZE;
+                input.extend_from_slice(&h0.0);
+                input.extend_from_slice(&h1.0);
+                input.extend_from_slice(&sub_wires[start_b0..start_b0 + LABEL_SIZE]);
+                input.extend_from_slice(&sub_ciphertexts[c_start..c_start + LABEL_SIZE]);
+                index += 1;
+                c_start += LABEL_SIZE;
+            }
         }
     }
     assert_eq!(index, num_ciphertexts);
