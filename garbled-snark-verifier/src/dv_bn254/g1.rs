@@ -397,6 +397,9 @@ mod tests {
         let out_bits: Vec<bool> = out_wires.iter().map(|id| wires_bits[*id]).collect();
         let result = G1Projective::from_bits_unchecked(out_bits);
         assert_eq!(result, G1Projective::as_montgomery(p1 * s1 + p2 * s2));
+
+        let stats = bld.gate_counts();
+        println!("{stats}");
     }
 
     #[test]
