@@ -141,13 +141,12 @@ impl G1Projective {
         let affine_p = projective_to_affine_montgomery(bld, &p);
 
         let y2 = Fq::square_montgomery(bld, &affine_p.y.0);
-        let lhs = Fq::mul_by_constant_montgomery(bld, &y2, Fq::from_montgomery(ark_bn254::Fq::from(Fq::montgomery_r_as_biguint())));
+        // let lhs = Fq::mul_by_constant_montgomery(bld, &y2, Fq::from_montgomery(ark_bn254::Fq::from(Fq::montgomery_r_as_biguint())));
         let x2 = Fq::square_montgomery(bld, &affine_p.x.0);
         let x3 = Fq::mul_montgomery(bld, &affine_p.x.0, &x2);
-
-        let rhs = Fq::add_constant(bld, &x3, ark_bn254::Fq::from(Fq::b_mul_as_biguint()));
-        Fq::equal(bld, &lhs, &rhs)
-
+        let x3b = Fq::add_constant(bld, &x3, Fq::as_montgomery(ark_bn254::g1::Config::COEFF_B));
+        // let rhs = Fq::add_constant(bld, &x3, ark_bn254::Fq::from(Fq::b_mul_as_biguint()));
+        Fq::equal(bld, &y2, &x3b)
     }
 
     // http://koclab.cs.ucsb.edu/teaching/ccs130h/2018/09projective.pdf
@@ -286,7 +285,7 @@ impl G1Projective {
 
         // if s == 0 return point at infinity
         let inf_point = ark_bn254::G1Projective::default();
-        let inf_point_wires = G1Projective::wires_set_montgomery(bld, inf_point);
+        let inf_point_wires = G1Projective::wires_set(bld, inf_point);
         let mut res = inf_point_wires.to_vec_wires();
         let mut point_pow = point.to_vec();
         let mut inf_wires = inf_point_wires.to_vec_wires();
@@ -306,7 +305,9 @@ impl G1Projective {
                 point_pow = Self::double_montgomery(bld, &point_pow);
             }
         }
-
+        // res = Self::add_montgomery(bld, &res, &point_pow);
+        // point_pow = Self::double_montgomery(bld, &point_pow);
+        // res = Self::add_montgomery(bld, &res, &point_pow);
         res
 
     }
@@ -370,7 +371,8 @@ mod tests {
     #[test]
     fn test_g1p_scalar_mul_montgomery_circuit_vjp() {
         let point = G1Projective::random();
-        let s = ark_bn254::Fr::from(10);
+        let mont_p = G1Projective::as_montgomery(point);
+        let s = Fr::random();
 
         let mut bld = CircuitAdapter::default();
         let point_wires = G1Projective::wires(&mut bld);
@@ -380,7 +382,7 @@ mod tests {
             &s_wires.0,
             &point_wires.to_vec_wires(),
         );
-        let witness = G1Projective::to_bits(point)
+        let witness = G1Projective::to_bits(mont_p)
             .into_iter()
             .chain(Fr::to_bits(s).into_iter())
             .collect::<Vec<bool>>();
@@ -389,6 +391,9 @@ mod tests {
         let out_bits: Vec<bool> = out_wires.iter().map(|id| wires_bits[*id]).collect();
         let result = G1Projective::from_bits_unchecked(out_bits);
         assert_eq!(result, G1Projective::as_montgomery(point * s));
+
+        let stats = bld.gate_counts();
+        println!("{stats}");
     }
 
     #[test]
@@ -443,7 +448,6 @@ mod tests {
 
         let mont_pp = G1Projective::as_montgomery(p_projective);
 
-
         let mut bld = CircuitAdapter::default();
         let point = G1Projective::wires(&mut bld);
         let witness =  G1Projective::to_bits(mont_pp);
@@ -469,11 +473,11 @@ mod tests {
     fn point_on_curve_bn254() {
         let p_projective = G1Projective::random().double();
         assert_ne!(p_projective.z, ark_bn254::Fq::ONE);
-
+        let mont_p = G1Projective::as_montgomery(p_projective);
 
         let mut bld = CircuitAdapter::default();
         let p_wires = G1Projective::wires(&mut bld);
-        let witness =  G1Projective::to_bits(p_projective);
+        let witness =  G1Projective::to_bits(mont_p);
         let out_wire = G1Projective::emit_projective_montgomery_point_is_on_curve(&mut bld, &p_wires);
 
         let wires = bld.eval_gates(&witness);
