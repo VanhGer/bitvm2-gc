@@ -288,7 +288,7 @@ impl G1Projective {
         let inf_point_wires = G1Projective::wires_set(bld, inf_point);
         let mut res = inf_point_wires.to_vec_wires();
         let mut point_pow = point.to_vec();
-        let mut inf_wires = inf_point_wires.to_vec_wires();
+        let inf_wires = inf_point_wires.to_vec_wires();
         for index in 0..Fr::N_BITS {
             let selector = s[index];
             // if selector, res = res + pow_point
@@ -305,35 +305,33 @@ impl G1Projective {
                 point_pow = Self::double_montgomery(bld, &point_pow);
             }
         }
-        // res = Self::add_montgomery(bld, &res, &point_pow);
-        // point_pow = Self::double_montgomery(bld, &point_pow);
-        // res = Self::add_montgomery(bld, &res, &point_pow);
+        res
+    }
+
+    pub fn msm_montgomery_circuit<T: CircuitTrait>(
+        bld: &mut T,
+        scalars: &[Vec<usize>],
+        points: &[Vec<usize>],
+    ) -> Vec<usize> {
+        let n = scalars.len();
+        assert_eq!(scalars.len(), points.len());
+        for i in 0..n {
+            assert_eq!(scalars[i].len(), Fr::N_BITS);
+            assert_eq!(points[i].len(), G1_PROJECTIVE_LEN);
+        }
+
+        let inf_point = ark_bn254::G1Projective::default();
+        let inf_point_wires = G1Projective::wires_set(bld, inf_point);
+        let mut res = inf_point_wires.to_vec_wires();
+
+        for i in 0..n {
+            let sm = Self::scalar_mul_montgomery_circuit(bld, &scalars[i], &points[i]);
+            res = Self::add_montgomery(bld, &res, &sm);
+        }
+
         res
 
     }
-    //
-    //
-    // pub fn msm_with_constant_bases_montgomery_circuit<const W: usize>(
-    //     scalars: Vec<Wires>,
-    //     bases: Vec<ark_bn254::G1Projective>,
-    // ) -> Circuit {
-    //     assert_eq!(scalars.len(), bases.len());
-    //     let mut to_be_added = Vec::new();
-    //     let mut circuit = Circuit::empty();
-    //     for (s, base) in zip(scalars, bases) {
-    //         let result_circuit = Self::scalar_mul_by_constant_base_montgomery_circuit::<W>(s, base);
-    //         let result = result_circuit);
-    //         to_be_added.push(result);
-    //     }
-    //
-    //     let mut acc = to_be_added[0].clone();
-    //     for add in to_be_added.iter().skip(1) {
-    //         let new_acc_circuit = Self::add_montgomery(acc.clone(), add.clone());
-    //         acc = new_acc_circuit);
-    //     }
-    //     circuit.add_wires(acc);
-    //     circuit
-    // }
 }
 
 pub struct G1Affine {
@@ -367,6 +365,39 @@ mod tests {
     use crate::dv_bn254::fq::Fq;
     use crate::dv_bn254::fr::Fr;
     use crate::dv_bn254::g1::{projective_to_affine_montgomery, G1Affine, G1Projective};
+
+    #[test]
+    fn test_msm_vjp() {
+        let p1 = G1Projective::random();
+        let p2 = G1Projective::random();
+        let mont_p1 = G1Projective::as_montgomery(p1);
+        let mont_p2 = G1Projective::as_montgomery(p2);
+
+        let s1 = Fr::random();
+        let s2 = Fr::random();
+
+        let mut bld = CircuitAdapter::default();
+        let p1_wires = G1Projective::wires(&mut bld);
+        let p2_wires = G1Projective::wires(&mut bld);
+        let s1_wires = Fr::wires(&mut bld);
+        let s2_wires = Fr::wires(&mut bld);
+        let out_wires = G1Projective::msm_montgomery_circuit(
+            &mut bld,
+            &vec![s1_wires.0.to_vec(), s2_wires.0.to_vec()],
+            &vec![p1_wires.to_vec_wires(), p2_wires.to_vec_wires()],
+        );
+        let witness = G1Projective::to_bits(mont_p1)
+            .into_iter()
+            .chain(G1Projective::to_bits(mont_p2))
+            .chain(Fr::to_bits(s1).into_iter())
+            .chain(Fr::to_bits(s2).into_iter())
+            .collect::<Vec<bool>>();
+
+        let wires_bits = bld.eval_gates(&witness);
+        let out_bits: Vec<bool> = out_wires.iter().map(|id| wires_bits[*id]).collect();
+        let result = G1Projective::from_bits_unchecked(out_bits);
+        assert_eq!(result, G1Projective::as_montgomery(p1 * s1 + p2 * s2));
+    }
 
     #[test]
     fn test_g1p_scalar_mul_montgomery_circuit_vjp() {
