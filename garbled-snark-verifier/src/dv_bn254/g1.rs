@@ -10,6 +10,7 @@ use ark_ff::{AdditiveGroup, UniformRand};
 use core::{cmp::min, iter::zip};
 use ark_ec::short_weierstrass::SWCurveConfig;
 use crate::circuits::sect233k1::builder::CircuitTrait;
+use crate::dv_bn254::basic::selector;
 use crate::dv_bn254::bigint::U254;
 use crate::dv_bn254::fq::FQ_LEN;
 
@@ -242,68 +243,72 @@ impl G1Projective {
     //
     // }
 
-    pub fn multiplexer<T: CircuitTrait>(bld: &mut T, a: &Vec<Vec<usize>>, s: &[usize], w: usize) -> Vec<usize> {
-        let n = 2_usize.pow(w.try_into().unwrap());
-        assert_eq!(a.len(), n);
-        for x in a.iter() {
-            assert_eq!(x.len(), G1_PROJECTIVE_LEN);
-        }
-        assert_eq!(s.len(), w);
+    // pub fn multiplexer<T: CircuitTrait>(bld: &mut T, a: &Vec<Vec<usize>>, s: &[usize], w: usize) -> Vec<usize> {
+    //     let n = 2_usize.pow(w.try_into().unwrap());
+    //     assert_eq!(a.len(), n);
+    //     for x in a.iter() {
+    //         assert_eq!(x.len(), G1_PROJECTIVE_LEN);
+    //     }
+    //     assert_eq!(s.len(), w);
+    //     let mut res = Vec::new();
+    //     for i in 0..G1_PROJECTIVE_LEN {
+    //         let ith_wires: Vec<usize> = a.iter().map(|x| x[i].clone()).collect();
+    //         let ith_result = multiplexer(bld, &ith_wires, s.clone(), w);
+    //         res.push(ith_result);
+    //     }
+    //     res
+    // }
+
+    pub fn selector_projective_montgomery<T: CircuitTrait>(
+        bld: &mut T,
+        a: &[usize],
+        b: &[usize],
+        c: usize,
+    ) -> Vec<usize> {
+        assert_eq!(a.len(), G1_PROJECTIVE_LEN);
+        assert_eq!(b.len(), G1_PROJECTIVE_LEN);
         let mut res = Vec::new();
         for i in 0..G1_PROJECTIVE_LEN {
-            let ith_wires: Vec<usize> = a.iter().map(|x| x[i].clone()).collect();
-            let ith_result = multiplexer(bld, &ith_wires, s.clone(), w);
-            res.push(ith_result);
+            let selected_wire = selector(bld, a[i], b[i], c);
+            res.push(selected_wire);
         }
         res
     }
 
-    pub fn scalar_mul_montgomery_circuit<const W: usize>(
+    pub fn scalar_mul_montgomery_circuit(
         bld: &mut impl CircuitTrait,
         s: &[usize],
         point: &[usize],
     ) -> Vec<usize> {
+        // use double and add
         assert_eq!(s.len(), Fr::N_BITS);
         assert_eq!(point.len(), G1_PROJECTIVE_LEN);
-        let n = 2_usize.pow(W as u32);
 
-        let mut bases_wires = Vec::new();
-        let mut p = ark_bn254::G1Projective::default();
-        let mut p_wires = G1Projective::wires_set_montgomery(bld, p).to_vec_wires();
-
-        for _ in 0..n {
-            bases_wires.push(p_wires.clone());
-            p_wires = G1Projective::add_montgomery(bld, &p_wires, point);
-        }
-
-        let mut to_be_added = Vec::new();
-
-        let mut index = 0;
-        // while index < Fr::N_BITS {
-        while index < 11 {
-            let w = min(W, Fr::N_BITS - index);
-            let m = 2_usize.pow(w as u32);
-            let selector = s[index..(index + w)].to_vec();
-            let result = Self::multiplexer(bld, &bases_wires[0..m].to_vec(), &selector, w);
-
-            to_be_added.push(result);
-            index += W;
-            let mut new_bases_wires = Vec::new();
-            for b in bases_wires {
-                let mut new_b = b;
-                for _ in 0..w {
-                    new_b = G1Projective::double_montgomery(bld, &new_b);
-                }
-                new_bases_wires.push(new_b);
+        // if s == 0 return point at infinity
+        let inf_point = ark_bn254::G1Projective::default();
+        let inf_point_wires = G1Projective::wires_set_montgomery(bld, inf_point);
+        let mut res = inf_point_wires.to_vec_wires();
+        let mut point_pow = point.to_vec();
+        let mut inf_wires = inf_point_wires.to_vec_wires();
+        for index in 0..Fr::N_BITS {
+            let selector = s[index];
+            // if selector, res = res + pow_point
+            // else: res = res + zero
+            let added = Self::selector_projective_montgomery(
+                bld,
+                &point_pow,
+                &inf_wires,
+                selector,
+            );
+            res = Self::add_montgomery(bld, &res, &added);
+            // double point_pow
+            if index != Fr::N_BITS - 1 {
+                point_pow = Self::double_montgomery(bld, &point_pow);
             }
-            bases_wires = new_bases_wires;
         }
 
-        let mut acc = to_be_added[0].clone();
-        for add in to_be_added.iter().skip(1) {
-            acc = Self::add_montgomery(bld, &acc, &add);
-        }
-        acc
+        res
+
     }
     //
     //
@@ -370,7 +375,7 @@ mod tests {
         let mut bld = CircuitAdapter::default();
         let point_wires = G1Projective::wires(&mut bld);
         let s_wires = Fr::wires(&mut bld);
-        let out_wires = G1Projective::scalar_mul_montgomery_circuit::<5>(
+        let out_wires = G1Projective::scalar_mul_montgomery_circuit(
             &mut bld,
             &s_wires.0,
             &point_wires.to_vec_wires(),
