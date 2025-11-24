@@ -8,3 +8,4 @@ pub mod scalar_mul;
 pub mod fp254impl;
 pub mod g1;
 mod fr;
+mod dv_ref;

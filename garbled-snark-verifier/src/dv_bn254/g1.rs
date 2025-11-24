@@ -8,7 +8,9 @@ use crate::{
 use crate::circuits::bn254::utils::create_rng;
 use ark_ff::{AdditiveGroup, UniformRand};
 use core::{cmp::min, iter::zip};
+use ark_ec::PrimeGroup;
 use ark_ec::short_weierstrass::SWCurveConfig;
+use num_bigint::BigUint;
 use crate::circuits::sect233k1::builder::CircuitTrait;
 use crate::dv_bn254::basic::selector;
 use crate::dv_bn254::bigint::U254;
@@ -129,6 +131,36 @@ impl G1Projective {
         res.extend(self.y.0);
         res.extend(self.z.0);
         res
+    }
+
+    pub fn equal<T: CircuitTrait>(bld: &mut T, p_a: &[usize], p_b: &[usize]) -> usize {
+        assert_eq!(p_a.len(), G1_PROJECTIVE_LEN);
+        assert_eq!(p_b.len(), G1_PROJECTIVE_LEN);
+
+        // The points (X, Y, Z) and (X', Y', Z')
+        // are equal when (X * Z^2) = (X' * Z'^2)
+        // and (Y * Z^3) = (Y' * Z'^3).
+        let x = p_a[0..Fq::N_BITS].to_vec();
+        let y = p_a[Fq::N_BITS..2 * Fq::N_BITS].to_vec();
+        let z = p_a[2 * Fq::N_BITS..3 * Fq::N_BITS].to_vec();
+        let x_prime = p_b[0..Fq::N_BITS].to_vec();
+        let y_prime = p_b[Fq::N_BITS..2 * Fq::N_BITS].to_vec();
+        let z_prime = p_b[2 * Fq::N_BITS..3 * Fq::N_BITS].to_vec();
+
+        let z2 = Fq::square_montgomery(bld, &z);
+        let z3 = Fq::mul_montgomery(bld, &z, &z2);
+        let z_prime2 = Fq::square_montgomery(bld, &z_prime);
+        let z_prime3 = Fq::mul_montgomery(bld, &z_prime, &z_prime2);
+
+        let lhs_x = Fq::mul_montgomery(bld, &x, &z_prime2);
+        let rhs_x = Fq::mul_montgomery(bld, &x_prime, &z2);
+
+        let lhs_y = Fq::mul_montgomery(bld, &y, &z_prime3);
+        let rhs_y = Fq::mul_montgomery(bld, &y_prime, &z3);
+
+        let eq_x = Fq::equal(bld, &lhs_x, &rhs_x);
+        let eq_y = Fq::equal(bld, &lhs_y, &rhs_y);
+        bld.and_wire(eq_x, eq_y)
     }
 }
 
@@ -330,7 +362,15 @@ impl G1Projective {
         }
 
         res
+    }
 
+    pub fn wires_set_montgomery_generator<T: CircuitTrait>(
+        bld: &mut T,
+    ) -> Vec<usize> {
+        let gen_point = ark_bn254::G1Projective::generator();
+        let mont_gen = G1Projective::as_montgomery(gen_point);
+        let gen_wires = G1Projective::wires_set(bld, mont_gen);
+        gen_wires.to_vec_wires()
     }
 }
 
@@ -365,6 +405,77 @@ mod tests {
     use crate::dv_bn254::fq::Fq;
     use crate::dv_bn254::fr::Fr;
     use crate::dv_bn254::g1::{projective_to_affine_montgomery, G1Affine, G1Projective};
+
+    #[test]
+    fn test_demo_verfier_vjp() {
+        let p1 = G1Projective::random();
+        let mont_p1 = G1Projective::as_montgomery(p1);
+
+        let s1 = Fr::random();
+        let mont_s1 = Fr::as_montgomery(s1);
+
+        let p1s1 = p1 * s1;
+        let mont_p1s1 = G1Projective::as_montgomery(p1s1);
+        let mont_r = ark_bn254::Fr::from(Fr::montgomery_r_as_biguint());
+
+        let mut bld = CircuitAdapter::default();
+        let p1_mont_wires = G1Projective::wires(&mut bld);
+        let p1s1_mont_wires = G1Projective::wires(&mut bld);
+        let mont_s1_wires = Fr::wires(&mut bld);
+        let mont_r_wires = Fr::wires_set(&mut bld, mont_r.clone());
+        let lhs_wires = G1Projective::scalar_mul_montgomery_circuit(
+            &mut bld,
+            &mont_s1_wires.0.to_vec(),
+            &p1_mont_wires.to_vec_wires(),
+        );
+
+        let rhs_wires = G1Projective::scalar_mul_montgomery_circuit(
+            &mut bld,
+            &mont_r_wires.0.to_vec(),
+            &p1s1_mont_wires.to_vec_wires(),
+        );
+
+        let witness = G1Projective::to_bits(mont_p1)
+            .into_iter()
+            .chain(G1Projective::to_bits(mont_p1s1))
+            .chain(Fr::to_bits(mont_s1).into_iter())
+            // .chain(Fr::to_bits(s2).into_iter())
+            .collect::<Vec<bool>>();
+
+        let wires_bits = bld.eval_gates(&witness);
+        let lhs_bits = lhs_wires.iter().map(|id| wires_bits[*id]).collect();
+        let rhs_bits = rhs_wires.iter().map(|id| wires_bits[*id]).collect();
+
+        let stats = bld.gate_counts();
+        println!("{stats}");
+
+        let lhs = G1Projective::from_bits_unchecked(lhs_bits);
+        let rhs = G1Projective::from_bits_unchecked(rhs_bits);
+        assert_eq!(lhs, rhs);
+    }
+
+    #[test]
+    fn test_equal_g1ps() {
+        let p1 = G1Projective::random().double();
+        let p1_a = p1.into_affine();
+        let p2: ark_bn254::G1Projective = p1_a.into();
+
+        println!("p1: {:?}", p1);
+        println!("p2: {:?}", p2);
+
+        let mut bld = CircuitAdapter::default();
+        let p1_wires = G1Projective::wires(&mut bld);
+        let p2_wires = G1Projective::wires(&mut bld);
+        let eq_wire = G1Projective::equal(&mut bld, &p1_wires.to_vec_wires(), &p2_wires.to_vec_wires());
+        let witness = G1Projective::to_bits(p1)
+            .into_iter()
+            .chain(G1Projective::to_bits(p2))
+            .collect::<Vec<bool>>();
+
+        let wires_bits = bld.eval_gates(&witness);
+        let eq_value = wires_bits[eq_wire];
+        assert_eq!(eq_value, true);
+    }
 
     #[test]
     fn test_msm_vjp() {
@@ -424,7 +535,7 @@ mod tests {
         let wires_bits = bld.eval_gates(&witness);
         let out_bits: Vec<bool> = out_wires.iter().map(|id| wires_bits[*id]).collect();
         let result = G1Projective::from_bits_unchecked(out_bits);
-        assert_eq!(result, G1Projective::as_montgomery(point * s));
+        assert_eq!(result, point * s);
 
         let stats = bld.gate_counts();
         println!("{stats}");

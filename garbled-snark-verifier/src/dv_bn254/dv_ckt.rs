@@ -120,7 +120,7 @@ fn u8_arr_to_labels_le<T: CircuitTrait>(bld: &mut T, ns: &[u8]) -> Vec<[usize; 8
 
 fn get_fs_challenge<T: CircuitTrait>(
     bld: &mut T,
-    commit_p: G1Projective,
+    commit_p: &G1Projective,
     public_inputs: [Fr; 2],
     srs_bytes: Vec<u8>,
     circuit_info_bytes: Vec<u8>,
@@ -260,7 +260,7 @@ pub(crate) fn verify<T: CircuitTrait>(
     let decoded_points_valid = bld.and_wire(is_proof_commit_p_on_curve, is_proof_kzg_k_on_curve); // both points valid
 
     let fs_challenge_alpha =
-        get_fs_challenge(bld, proof.commit_p, public_inputs.public_inputs.clone(), vec![], vec![]);
+        get_fs_challenge(bld, &proof.commit_p, public_inputs.public_inputs.clone(), vec![], vec![]);
 
     let i0 = {
         let t0 = Fr::mul_montgomery(bld, &public_inputs.public_inputs[1].0, &fs_challenge_alpha.0);
@@ -286,18 +286,19 @@ pub(crate) fn verify<T: CircuitTrait>(
     let tmp0 = Fr::mul_montgomery(bld, &secrets.tau.0, &fs_challenge_alpha.0);
     let v0 = Fr::mul_montgomery(bld, &tmp0, &secrets.epsilon.0);
 
-    let w = 5;
-    // let generator = CurvePoint::generator(bld);
+    let generator = G1Projective::wires_set_montgomery_generator(bld);
+    let lhs = G1Projective::msm_montgomery_circuit(
+        bld,
+        &[u0, v0],
+        &[generator, proof.kzg_k.to_vec_wires()]
+    );
     // let v0_k = emit_mul_windowed_tau(bld, &v0, &proof_kzg_k, w);
     // let u0_g = emit_mul_windowed_tau(bld, &u0, &generator, w);
     // let lhs = emit_point_add(bld, &v0_k, &u0_g);
-    // let rhs: CurvePoint = proof_commit_p;
-    //
-    // let verify_success = emit_point_equals(bld, &lhs, &rhs);
-    // let eq_with_valid_points = bld.and_wire(verify_success, decoded_points_valid);
-    //
-    // bld.and_wire(eq_with_valid_points, proof_scalars_valid)
-    0
+    let rhs = proof.commit_p.to_vec_wires();
+    let verify_success = G1Projective::equal(bld, &lhs, &rhs);
+    let eq_with_valid_points = bld.and_wire(verify_success, decoded_points_valid);
+    bld.and_wire(eq_with_valid_points, proof_scalars_valid)
 }
 
 // #[cfg(test)]
