@@ -125,7 +125,7 @@ fn get_fs_challenge<T: CircuitTrait>(
     srs_bytes: Vec<u8>,
     circuit_info_bytes: Vec<u8>,
 ) -> Fr {
-    // convert affine (x, λ) into byte-aligned representation (30 bytes per coordinate)
+    // convert into byte-aligned representation
     let zero = bld.zero();
     let mut commit_bits = commit_p.x.0.to_vec();
     commit_bits.resize(256, zero);
@@ -141,8 +141,8 @@ fn get_fs_challenge<T: CircuitTrait>(
     let public_inputs_hash = {
         let mut buf = Vec::new();
         for pubin in public_inputs {
-            let mut pubin_256 = [bld.zero(); FR_LEN];
-            pubin_256.copy_from_slice(&pubin.0[0..FR_LEN]);
+            let mut pubin_256 = [bld.zero(); 256];
+            pubin_256[0..FR_LEN].copy_from_slice(&pubin.0);
             let mut r: Vec<[usize; 8]> = pubin_256
                 .chunks(8)
                 .map(|x| {
@@ -185,8 +185,17 @@ fn get_fs_challenge<T: CircuitTrait>(
 
     let zero_byte = [bld.zero(); 8];
     // convert to Fr
+    root_hash[31..].copy_from_slice(&[zero_byte; 1]); // mask top 1 bytes, 256-8=248 bits
+
     let root_hash_flat: Vec<usize> = root_hash.into_iter().flatten().collect();
     let root_fr_inner: [usize; FR_LEN] = root_hash_flat[0..FR_LEN].try_into().unwrap();
+
+    // get runtime hash
+    let mut temp = public_inputs_hash;
+    temp[31..].copy_from_slice(&[zero_byte; 1]); // mask top 1 bytes, 256-8=248 bits
+    let temp_flat: Vec<usize> = temp.into_iter().flatten().collect();
+    let temp_fr_inner: [usize; FR_LEN] = temp_flat[0..FR_LEN].try_into().unwrap();
+
     Fr(root_fr_inner)
 }
 
@@ -301,8 +310,181 @@ pub(crate) fn verify<T: CircuitTrait>(
     bld.and_wire(eq_with_valid_points, proof_scalars_valid)
 }
 
-// #[cfg(test)]
-// mod test {
+#[cfg(test)]
+mod test {
+    use std::str::FromStr;
+    use ark_ec::PrimeGroup;
+    use crate::circuits::sect233k1::builder::{CircuitAdapter, CircuitTrait};
+    use crate::dv_bn254::dv_ckt::{get_fs_challenge, get_input_indexes};
+    use crate::dv_bn254::dv_ref::{FrRef, ProofRef, PublicInputsRef, TrapdoorRef, VerifierPayloadRef};
+    use crate::dv_bn254::fp254impl::Fp254Impl;
+    use crate::dv_bn254::fr::Fr;
+    use crate::dv_bn254::g1::G1Projective;
+
+    #[test]
+    fn test_compute_u0_v0() {
+        // Prepare VerifierPayloadRef
+        let tau = FrRef::from_str(
+            "16182941859318853681113132547625168061780848020606917705886909352328641449447",
+        )
+            .unwrap();
+        let delta = FrRef::from_str(
+            "1386358569040211194277496369854236447924640692868989861989546836976256123776",
+        )
+            .unwrap();
+        let epsilon = FrRef::from_str(
+            "19902273041930411779697910799612905558671735917586419204128025082060670839903",
+        )
+            .unwrap();
+        let mont_commit_p = ark_bn254::G1Projective::new_unchecked(
+            ark_bn254::Fq::from_str("17828526848398818524594272010037255222158469049154221871955648825738160508900").unwrap(),
+            ark_bn254::Fq::from_str("14170820817868591051981977221323237801250104508723967068773366962772917797098").unwrap(),
+            ark_bn254::Fq::from_str("2513762298069720657829538045439982366122625059238132972369886427106554100054").unwrap(),
+        );
+        let mont_kzg_k = ark_bn254::G1Projective::new_unchecked(
+            ark_bn254::Fq::from_str("16107189865462081378229596490861223404542946800177144985196035470958801847361").unwrap(),
+            ark_bn254::Fq::from_str("3802773935032520992617144264570824192793931554569247968920659382962943815109").unwrap(),
+            ark_bn254::Fq::from_str("80507567559795152954437834756393180561412479055708978020511381804595023465").unwrap(),
+        );
+
+        let a0 = FrRef::from_str(
+            "2975525620490834464405940205011309071747726351692005111228101901132749428958",
+        )
+            .unwrap();
+        let b0 = FrRef::from_str(
+            "9701346963693590595658518476858392988245806407586431150638849218581259322452",
+        )
+            .unwrap();
+
+        let public_inputs = [
+            FrRef::from_str("16217006396879640651787331949151919374620611580946319582101174263628714475489")
+                .unwrap(),
+            FrRef::from_str("4224161200009956348416803608862024017805255356259249285367676853928926904303")
+                .unwrap(),
+        ];
+
+        let witness = VerifierPayloadRef {
+            proof: ProofRef { mont_commit_p, mont_kzg_k, a0, b0 },
+            public_input: PublicInputsRef { public_inputs },
+            trapdoor: TrapdoorRef { tau, delta, epsilon },
+        };
+
+        let mut bld = CircuitAdapter::default();
+        let (proof, rpin, secrets) = get_input_indexes(&mut bld);
+
+        let fs_challenge_alpha =
+            get_fs_challenge(&mut bld, &proof.commit_p, rpin.public_inputs.clone(), vec![], vec![]);
+        let i0 = {
+            let t0 = Fr::mul_montgomery(&mut bld, &rpin.public_inputs[1].0, &fs_challenge_alpha.0);
+            Fr::add(&mut bld, &t0, &rpin.public_inputs[0].0)
+        };
+
+        let r0 = {
+            //&proof.a0 * &proof.b0 - &proof.i0
+            let t0 = Fr::mul_montgomery(&mut bld, &proof.a0.0, &proof.b0.0);
+            Fr::sub(&mut bld, &t0, &i0)
+        };
+
+        // Step 3. Compute u₀ and v₀
+        let u0 = {
+            //(proof.a0 + secrets.delta * (proof.b0 + secrets.delta * r0)) * secrets.epsilon
+            let delta_r0 = Fr::mul_montgomery(&mut bld, &secrets.delta.0, &r0);
+            let b0_plus = Fr::add(&mut bld, &proof.b0.0, &delta_r0);
+            let inner = Fr::mul_montgomery(&mut bld, &secrets.delta.0, &b0_plus);
+            let sum = Fr::add(&mut bld, &proof.a0.0, &inner);
+
+            Fr::mul_montgomery(&mut bld, &sum, &secrets.epsilon.0)
+        };
+
+        let tmp0 = Fr::sub(&mut bld, &secrets.tau.0, &fs_challenge_alpha.0);
+        let v0 = Fr::mul_montgomery(&mut bld, &tmp0, &secrets.epsilon.0);
+
+        // eval:
+        let wires_bits = bld.eval_gates(&witness.to_bits());
+
+        let u0_bits = u0.iter().map(|w| wires_bits[*w]).collect::<Vec<bool>>();
+        let v0_bits = v0.iter().map(|w| wires_bits[*w]).collect::<Vec<bool>>();
+        let u0_val = Fr::from_bits(u0_bits);
+        let v0_val = Fr::from_bits(v0_bits);
+
+        let expected_u0 = ark_bn254::Fr::from_str(
+            "9743625272928946869194351638312418140554477278217161320708001866919619239351",
+        )
+            .unwrap();
+        let expected_v0 = ark_bn254::Fr::from_str(
+            "14697703236190320965425825895501867787787703590667291868986257847520837972012",
+        )
+            .unwrap();
+
+        let mont_u0 = Fr::as_montgomery(expected_u0);
+        let mont_v0 = Fr::as_montgomery(expected_v0);
+        assert_eq!(u0_val, mont_u0);
+        assert_eq!(v0_val, mont_v0);
+
+        let stats = bld.gate_counts();
+        println!("{stats}");
+    }
+
+    #[test]
+    fn test_point_computation() {
+
+        let mont_commit_p = ark_bn254::G1Projective::new_unchecked(
+            ark_bn254::Fq::from_str("17828526848398818524594272010037255222158469049154221871955648825738160508900").unwrap(),
+            ark_bn254::Fq::from_str("14170820817868591051981977221323237801250104508723967068773366962772917797098").unwrap(),
+            ark_bn254::Fq::from_str("2513762298069720657829538045439982366122625059238132972369886427106554100054").unwrap(),
+        );
+        let mont_kzg_k = ark_bn254::G1Projective::new_unchecked(
+            ark_bn254::Fq::from_str("16107189865462081378229596490861223404542946800177144985196035470958801847361").unwrap(),
+            ark_bn254::Fq::from_str("3802773935032520992617144264570824192793931554569247968920659382962943815109").unwrap(),
+            ark_bn254::Fq::from_str("80507567559795152954437834756393180561412479055708978020511381804595023465").unwrap(),
+        );
+
+        let mont_u0 = ark_bn254::Fr::from_str("11652346764044857618553525053657312136468629477167387001167575917396119875544").unwrap();
+        let mont_v0 = ark_bn254::Fr::from_str("6813834760176976181591963068295107428614621550608555479227816612274682117051").unwrap();
+        let mont_r = ark_bn254::Fr::from(Fr::montgomery_r_as_biguint());
+
+
+        let mut bld = CircuitAdapter::default();
+        let mont_p_wires = G1Projective::wires(&mut bld);
+        let mont_k_wires = G1Projective::wires(&mut bld);
+        let mont_u0_wires = Fr::wires(&mut bld);
+        let mont_v0_wires = Fr::wires(&mut bld);
+
+        let mont_r_wires = Fr::wires_set(&mut bld, mont_r.clone());
+        let mont_generator_wires = G1Projective::wires_set_montgomery_generator(&mut bld);
+
+        let lhs_wires = G1Projective::msm_montgomery_circuit(
+            &mut bld,
+            &[mont_v0_wires.0.to_vec(), mont_u0_wires.0.to_vec()],
+            &[mont_k_wires.to_vec_wires(), mont_generator_wires],
+        );
+
+        let rhs_wires = G1Projective::scalar_mul_montgomery_circuit(
+            &mut bld,
+            &mont_r_wires.0.to_vec(),
+            &mont_p_wires.to_vec_wires(),
+        );
+
+        let witness = G1Projective::to_bits(mont_commit_p)
+            .into_iter()
+            .chain(G1Projective::to_bits(mont_kzg_k))
+            .chain(Fr::to_bits(mont_u0).into_iter())
+            .chain(Fr::to_bits(mont_v0).into_iter())
+            .collect::<Vec<bool>>();
+
+        let wires_bits = bld.eval_gates(&witness);
+        let lhs_bits = lhs_wires.iter().map(|id| wires_bits[*id]).collect();
+        let rhs_bits = rhs_wires.iter().map(|id| wires_bits[*id]).collect();
+
+        let stats = bld.gate_counts();
+        println!("{stats}");
+
+        let lhs = G1Projective::from_bits_unchecked(lhs_bits);
+        let rhs = G1Projective::from_bits_unchecked(rhs_bits);
+        assert_eq!(lhs, rhs);
+    }
+}
+
 //     use std::str::FromStr;
 //
 //     use super::get_fs_challenge;

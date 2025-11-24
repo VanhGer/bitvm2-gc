@@ -1,11 +1,12 @@
 use crate::dv_bn254::bigint::U254;
 use crate::circuits::bn254::utils::create_rng;
 use crate::{bag::*, dv_bn254::fp254impl::Fp254Impl};
-use ark_ff::Field;
+use ark_ff::{AdditiveGroup, Field};
 use ark_ff::{PrimeField, UniformRand};
 use core::str::FromStr;
 use num_bigint::BigUint;
 use crate::circuits::sect233k1::builder::CircuitTrait;
+use crate::dv_bn254::basic::not;
 
 pub const FQ_LEN: usize = 254;
 #[derive(Debug, Clone)]
@@ -31,6 +32,21 @@ impl Fp254Impl for Fq {
     fn two_third_modulus() -> BigUint {
         BigUint::from(ark_bn254::Fq::from(2) / ark_bn254::Fq::from(3))
     }
+
+    fn neg<T: CircuitTrait>(bld: &mut T, a: &[usize]) -> Vec<usize> {
+        assert_eq!(a.len(), Self::N_BITS);
+        let mut not_a =  Vec::new();
+        for i in 0..Self::N_BITS {
+            not_a.push(not(bld, a[i]));
+        }
+
+        let wires = Self::add_constant(
+            bld,
+            &not_a,
+            ark_bn254::Fq::from(1) - ark_bn254::Fq::from(Self::not_modulus_as_biguint()),
+        );
+        wires
+    }
 }
 
 impl Fq {
@@ -40,6 +56,7 @@ impl Fq {
     pub fn b_mul_as_biguint() -> BigUint {
         BigUint::from_str(Self::B_MUL).unwrap()
     }
+    
     pub fn as_montgomery(a: ark_bn254::Fq) -> ark_bn254::Fq {
         a * ark_bn254::Fq::from(Self::montgomery_r_as_biguint())
     }
@@ -111,6 +128,25 @@ impl Fq {
 
     pub fn from_montgomery_wires<T: CircuitTrait>(bld: &mut T, fq: Fq) -> ark_bn254::Fq {
         Self::from_montgomery(Self::from_wires(bld, fq))
+    }
+
+    pub fn add_constant<T: CircuitTrait>(bld: &mut T, a: &[usize], b: ark_bn254::Fq) -> Vec<usize> {
+        assert_eq!(a.len(), Self::N_BITS);
+        if b == ark_bn254::Fq::ZERO {
+            return a.to_vec();
+        }
+
+        let mut wires_1 = U254::add_constant(bld, a, &BigUint::from(b));
+        let u = wires_1.pop().unwrap();
+        let c = Self::not_modulus_as_biguint();
+        let mut wires_2 = U254::add_constant(bld, &wires_1, &c);
+        wires_2.pop();
+        let v = U254::less_than_constant(bld, &wires_1, &Self::modulus_as_biguint());
+
+        // Ncimp
+        let not_a = not(bld, u);
+        let s = bld.and_wire(not_a, v);
+        U254::select(bld, &wires_1, &wires_2, s)
     }
 
     // // check if x is a quadratic non-residue (QNR) in Fq

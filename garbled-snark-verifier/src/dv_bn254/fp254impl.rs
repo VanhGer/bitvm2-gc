@@ -12,6 +12,7 @@ use num_bigint::BigUint;
 use num_traits::{One, Zero};
 use crate::circuits::sect233k1::builder::CircuitTrait;
 use crate::dv_bn254::basic::not;
+use crate::dv_bn254::fr::Fr;
 
 pub trait Fp254Impl: Sized {
     const MODULUS: &'static str;
@@ -84,40 +85,8 @@ pub trait Fp254Impl: Sized {
         let wires_3 = U254::select(bld, &wires_1, &wires_2, s);
         wires_3
     }
-
-    fn add_constant<T: CircuitTrait> (bld: &mut T, a: &[usize], b: ark_bn254::Fq) -> Vec<usize> {
-        assert_eq!(a.len(), Self::N_BITS);
-        if b == ark_bn254::Fq::ZERO {
-            return a.to_vec();
-        }
-
-        let mut wires_1 = U254::add_constant(bld, a, &BigUint::from(b));
-        let u = wires_1.pop().unwrap();
-        let c = Self::not_modulus_as_biguint();
-        let mut wires_2 = U254::add_constant(bld, &wires_1, &c);
-        wires_2.pop();
-        let v = U254::less_than_constant(bld, &wires_1, &Self::modulus_as_biguint());
-
-        // Ncimp
-        let not_a = not(bld, u);
-        let s = bld.and_wire(not_a, v);
-        U254::select(bld, &wires_1, &wires_2, s)
-    }
-
-    fn neg<T: CircuitTrait>(bld: &mut T, a: &[usize]) -> Vec<usize> {
-        assert_eq!(a.len(), Self::N_BITS);
-        let mut not_a =  Vec::new();
-        for i in 0..Self::N_BITS {
-            not_a.push(not(bld, a[i]));
-        }
-
-        let wires = Self::add_constant(
-            bld,
-            &not_a,
-            ark_bn254::Fq::from(1) - ark_bn254::Fq::from(Self::not_modulus_as_biguint()),
-        );
-        wires
-    }
+    
+    fn neg<T: CircuitTrait>(bld: &mut T, a: &[usize]) -> Vec<usize>;
 
     fn sub<T: CircuitTrait>(bld: &mut T, a: &[usize], b: &[usize]) -> Vec<usize> {
         assert_eq!(a.len(), Self::N_BITS);
@@ -227,7 +196,7 @@ pub trait Fp254Impl: Sized {
         reduction_circuit
     }
 
-    fn mul_by_constant_montgomery<T: CircuitTrait>(bld: &mut T, a: &[usize], b: ark_bn254::Fq) -> Vec<usize> {
+    fn mul_by_fq_constant_montgomery<T: CircuitTrait>(bld: &mut T, a: &[usize], b: ark_bn254::Fq) -> Vec<usize> {
         assert_eq!(a.len(), Self::N_BITS);
 
         if b == ark_bn254::Fq::ZERO {
@@ -235,6 +204,22 @@ pub trait Fp254Impl: Sized {
         }
 
         if b == Fq::as_montgomery(ark_bn254::Fq::ONE) {
+            return a.to_vec();
+        }
+
+        let mul_circuit = U254::mul_by_constant(bld, a, b.into());
+        let reduction_circuit = Self::montgomery_reduce(bld, &mul_circuit);
+        reduction_circuit
+    }
+
+    fn mul_by_fr_constant_montgomery<T: CircuitTrait>(bld: &mut T, a: &[usize], b: ark_bn254::Fr) -> Vec<usize> {
+        assert_eq!(a.len(), Self::N_BITS);
+
+        if b == ark_bn254::Fr::ZERO {
+            return Fr::wires_set(bld, ark_bn254::Fr::ZERO).0.to_vec();
+        }
+
+        if b == Fr::as_montgomery(ark_bn254::Fr::ONE) {
             return a.to_vec();
         }
 
@@ -396,7 +381,7 @@ pub trait Fp254Impl: Sized {
         // divide result by 2^k
         for _ in 0..2 * Self::N_BITS {
             let updated_s = Self::half(bld, &s);
-            let updated_k = Self::add_constant(bld, &k, ark_bn254::Fq::from(-1));
+            let updated_k = Fq::add_constant(bld, &k, ark_bn254::Fq::from(-1));
             let selector = Self::equal_constant(bld, &k, ark_bn254::Fq::ZERO);
             s = U254::select(bld, &s, &updated_s, selector);
             k = U254::select(bld, &k, &updated_k, selector);
@@ -407,7 +392,7 @@ pub trait Fp254Impl: Sized {
     fn inverse_montgomery<T: CircuitTrait>(bld: &mut T, a: &[usize]) -> Vec<usize> {
 
         let b = Fq::inverse(bld, a);
-        let result = Fq::mul_by_constant_montgomery(
+        let result = Fq::mul_by_fq_constant_montgomery(
             bld,
             &b,
             ark_bn254::Fq::from(Fq::montgomery_r_as_biguint()).square()

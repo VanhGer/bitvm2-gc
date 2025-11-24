@@ -407,6 +407,28 @@ mod tests {
     use crate::dv_bn254::g1::{projective_to_affine_montgomery, G1Affine, G1Projective};
 
     #[test]
+    fn sub_montgomery_test() {
+        let t0 = ark_bn254::Fr::from_str("7732983886091688221498675126584431356840007664582939941724679283817292177916").unwrap();
+        let i0 = ark_bn254::Fr::from_str("4309415654564185098055313613053571962808436852931865757620162477615162115501").unwrap();
+        let r0 = t0 - i0;
+        println!("{:?}", r0);
+        let mut bld = CircuitAdapter::default();
+        let t_wires = Fr::wires(&mut bld);
+        let i_wires = Fr::wires(&mut bld);
+        let r_wires = Fr::sub(&mut bld, &t_wires.0.to_vec(), &i_wires.0.to_vec());
+
+        let witness = Fr::to_bits(Fr::as_montgomery(t0))
+            .into_iter()
+            .chain(Fr::to_bits(Fr::as_montgomery(i0)))
+            .collect::<Vec<bool>>();
+
+        let wires_bits = bld.eval_gates(&witness);
+        let r_bits: Vec<bool> = r_wires.iter().map(|id| wires_bits[*id]).collect();
+        let r_res = Fr::from_bits(r_bits);
+        assert_eq!(r_res, Fr::as_montgomery(r0));
+    }
+
+    #[test]
     fn test_demo_verfier_vjp() {
         let p1 = G1Projective::random();
         let mont_p1 = G1Projective::as_montgomery(p1);
