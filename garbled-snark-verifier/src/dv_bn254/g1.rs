@@ -551,7 +551,7 @@ mod tests {
         let wires_bits = bld.eval_gates(&witness);
         let out_bits: Vec<bool> = out_wires.iter().map(|id| wires_bits[*id]).collect();
         let result = G1Projective::from_bits_unchecked(out_bits);
-        assert_eq!(result, point * s);
+        assert_eq!(result, G1Projective::as_montgomery(point * s));
 
         let stats = bld.gate_counts();
         println!("{stats}");
