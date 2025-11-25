@@ -259,6 +259,9 @@ pub(crate) fn verify<T: CircuitTrait>(
     let proof_scalars_valid = bld.xor_wire(proof_scalars_invalid, one_wire); // both scalars valid
     let decoded_points_valid = bld.and_wire(is_proof_commit_p_on_curve, is_proof_kzg_k_on_curve); // both points valid
 
+    let point_and_decode_valid_stats = bld.gate_counts();
+    println!("point_and_decode_valid_stats: {:?}", point_and_decode_valid_stats);
+
     let fs_challenge_alpha =
         get_fs_challenge(bld, &proof.mont_commit_p, public_inputs.public_inputs.clone(), vec![], vec![]);
     let i0 = {
@@ -286,12 +289,18 @@ pub(crate) fn verify<T: CircuitTrait>(
     let tmp0 = Fr::sub(bld, &secrets.tau.0, &fs_challenge_alpha.0);
     let v0 = Fr::mul_montgomery(bld, &tmp0, &secrets.epsilon.0);
 
+    let u0_v0_stats = bld.gate_counts();
+    println!("u0_v0_stats: {:?}", u0_v0_stats);
+
     let generator = G1Projective::wires_set_montgomery_generator(bld);
     let lhs = G1Projective::msm_montgomery_circuit(
         bld,
         &[u0, v0],
         &[generator, proof.mont_kzg_k.to_vec_wires()]
     );
+
+    let lhs_stats = bld.gate_counts();
+    println!("lhs_stats: {:?}", lhs_stats);
 
     let mont_r = ark_bn254::Fr::from(Fr::montgomery_r_as_biguint());
     let mont_r_wires = Fr::wires_set(bld, mont_r.clone());
