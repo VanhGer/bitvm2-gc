@@ -1,8 +1,7 @@
 use crate::dv_bn254::bigint::U254;
 use crate::circuits::bn254::utils::create_rng;
-use crate::{bag::*, dv_bn254::fp254impl::Fp254Impl};
-use ark_ff::{AdditiveGroup, Field};
-use ark_ff::{PrimeField, UniformRand};
+use crate::{dv_bn254::fp254impl::Fp254Impl};
+use ark_ff::{AdditiveGroup, UniformRand};
 use core::str::FromStr;
 use num_bigint::BigUint;
 use crate::circuits::sect233k1::builder::CircuitTrait;

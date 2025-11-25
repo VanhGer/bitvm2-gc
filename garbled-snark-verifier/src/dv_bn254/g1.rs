@@ -1,19 +1,14 @@
 use crate::{
-    bag::*,
     dv_bn254::{
-        basic::multiplexer,
         fp254impl::Fp254Impl, fq::Fq, fr::Fr,
     },
 };
 use crate::circuits::bn254::utils::create_rng;
 use ark_ff::{AdditiveGroup, UniformRand};
-use core::{cmp::min, iter::zip};
 use ark_ec::PrimeGroup;
 use ark_ec::short_weierstrass::SWCurveConfig;
-use num_bigint::BigUint;
 use crate::circuits::sect233k1::builder::CircuitTrait;
 use crate::dv_bn254::basic::selector;
-use crate::dv_bn254::bigint::U254;
 use crate::dv_bn254::fq::FQ_LEN;
 
 #[derive(Debug, Clone)]
@@ -397,14 +392,13 @@ pub fn projective_to_affine_montgomery<T: CircuitTrait>(bld: &mut T, p_point: &G
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
-    use ark_ec::{AffineRepr, CurveGroup};
-    use ark_ec::short_weierstrass::SWCurveConfig;
+    use ark_ec::CurveGroup;
     use ark_ff::{AdditiveGroup, Field};
     use crate::circuits::sect233k1::builder::{CircuitAdapter, CircuitTrait};
     use crate::dv_bn254::fp254impl::Fp254Impl;
     use crate::dv_bn254::fq::Fq;
     use crate::dv_bn254::fr::Fr;
-    use crate::dv_bn254::g1::{projective_to_affine_montgomery, G1Affine, G1Projective};
+    use crate::dv_bn254::g1::{projective_to_affine_montgomery, G1Projective};
 
     #[test]
     fn sub_montgomery_test() {
@@ -591,12 +585,11 @@ mod tests {
     #[test]
     fn test_fq_inverse_montgomery_vjp() {
         let a = ark_bn254::Fq::from(10);
-        let inv_a = Fq::as_montgomery(a.inverse().unwrap());
 
         let mut bld = CircuitAdapter::default();
         let mont_a = Fq::as_montgomery(a);
 
-        let mut a_ref = Fq::wires(&mut bld);
+        let a_ref = Fq::wires(&mut bld);
 
         let out = Fq::inverse_montgomery(&mut bld, &a_ref.0);
         let witness = Fq::to_bits(mont_a);

@@ -1,9 +1,8 @@
 use crate::{
-    bag::*,
     dv_bn254::bigint::{
         add::{add_generic, sub_generic_without_borrow},
         cmp::self_or_zero_generic,
-        utils::{bits_from_biguint, n_wires},
+        utils::{bits_from_biguint},
     },
 };
 use num_bigint::BigUint;
@@ -13,22 +12,22 @@ use std::sync::Mutex;
 use crate::circuits::sect233k1::builder::CircuitTrait;
 use crate::dv_bn254::bigint::U254;
 
-static KARATSUBA_DECISIONS: Lazy<Mutex<[Option<bool>; 256]>> =
-    Lazy::new(|| Mutex::new([None; 256]));
+// static KARATSUBA_DECISIONS: Lazy<Mutex<[Option<bool>; 256]>> =
+//     Lazy::new(|| Mutex::new([None; 256]));
 
 fn extend_with_false<T: CircuitTrait>(bld: &mut T, wires: &mut Vec<usize>) {
     wires.push(bld.zero())
 }
 
-fn set_karatsuba_decision_flag(index: usize, value: bool) {
-    let mut flags = KARATSUBA_DECISIONS.lock().unwrap();
-    flags[index] = Some(value);
-}
-
-fn get_karatsuba_decision_flag(index: usize) -> Option<bool> {
-    let flags = KARATSUBA_DECISIONS.lock().unwrap();
-    flags[index]
-}
+// fn set_karatsuba_decision_flag(index: usize, value: bool) {
+//     let mut flags = KARATSUBA_DECISIONS.lock().unwrap();
+//     flags[index] = Some(value);
+// }
+//
+// fn get_karatsuba_decision_flag(index: usize) -> Option<bool> {
+//     let flags = KARATSUBA_DECISIONS.lock().unwrap();
+//     flags[index]
+// }
 
 pub fn mul_generic<T: CircuitTrait>(bld: &mut T, a_wires: &[usize], b_wires: &[usize], len: usize) -> Vec<usize> {
     assert_eq!(a_wires.len(), len);

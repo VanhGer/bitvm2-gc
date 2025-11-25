@@ -1,15 +1,12 @@
 use crate::{
-    bag::*,
     dv_bn254::{
-        basic::selector,
-        bigint::{U254, utils::bits_from_biguint},
+        bigint::U254,
         fq::Fq,
     },
 };
 use ark_ff::{AdditiveGroup, Field};
 use core::str::FromStr;
 use num_bigint::BigUint;
-use num_traits::{One, Zero};
 use crate::circuits::sect233k1::builder::CircuitTrait;
 use crate::dv_bn254::basic::not;
 use crate::dv_bn254::fr::Fr;
@@ -101,7 +98,7 @@ pub trait Fp254Impl: Sized {
     fn double<T: CircuitTrait>(bld: &mut T, a: &[usize]) -> Vec<usize> {
         assert_eq!(a.len(), Self::N_BITS);
     
-        let mut aa = a.clone().to_vec();
+        let mut aa = a.to_vec();
         let u = aa.pop().unwrap();
         let mut shifted_wires = vec![bld.zero()];
         shifted_wires.extend(aa);

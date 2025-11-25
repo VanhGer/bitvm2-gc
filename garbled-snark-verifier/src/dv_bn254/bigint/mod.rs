@@ -1,4 +1,6 @@
+use num_bigint::BigUint;
 use crate::circuits::sect233k1::builder::CircuitTrait;
+use crate::dv_bn254::bigint::utils::bits_from_biguint;
 
 pub mod add;
 pub mod cmp;
@@ -13,14 +15,16 @@ impl U254 {
         let wires: [usize; Self::N_BITS] = bld.fresh();
         wires.to_vec()
     }
-    // pub fn wires_set_from_number(u: &BigUint) -> Wires {
-    //     bits_from_biguint(u)[0..N_BITS]
-    //         .iter()
-    //         .map(|bit| {
-    //             let wire = new_wirex();
-    //             wire.borrow_mut().set(*bit);
-    //             wire
-    //         })
-    //         .collect()
-    // }
+    pub fn wires_set_from_number<T: CircuitTrait>(bld: &mut T, u: &BigUint) -> Vec<usize> {
+        bits_from_biguint(u)[0..Self::N_BITS]
+            .iter()
+            .map(|bit| {
+                if *bit {
+                    bld.one()
+                } else {
+                    bld.zero()
+                }
+            })
+            .collect()
+    }
 }

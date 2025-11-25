@@ -1,6 +1,6 @@
 use crate::bag::Circuit;
 use std::time::Instant;
-use crate::dv_bn254::dv_ckt::{compile_verifier, Proof, PublicInputs, Trapdoor};
+use crate::dv_bn254::dv_ckt::compile_verifier;
 use crate::dv_bn254::dv_ref::VerifierPayloadRef;
 
 pub fn dv_snark_verifier_circuit(
@@ -18,15 +18,13 @@ pub fn dv_snark_verifier_circuit(
 
 #[cfg(test)]
 mod test {
-    use crate::dv_bn254::dv_snark::dv_snark_verifier_circuit;
     use std::str::FromStr;
-    use std::time::Instant;
+    use crate::circuits::sect233k1::builder::CircuitTrait;
     use crate::dv_bn254::dv_ckt::compile_verifier;
     use crate::dv_bn254::dv_ref::{FrRef, ProofRef, PublicInputsRef, TrapdoorRef, VerifierPayloadRef};
-    use crate::dv_bn254::g1::G1Projective;
 
-    #[test]
-    fn test_dv_snark_verifier_circuit_vjp() {
+
+    fn initialize_witness() -> VerifierPayloadRef{
         // Prepare VerifierPayloadRef
         let tau = FrRef::from_str(
             "16182941859318853681113132547625168061780848020606917705886909352328641449447",
@@ -72,20 +70,20 @@ mod test {
             public_input: PublicInputsRef { public_inputs },
             trapdoor: TrapdoorRef { tau, delta, epsilon },
         };
+        witness
+    }
+    #[test]
+    fn test_dv_snark_verifier_circuit_vjp() {
+        // Prepare VerifierPayloadRef
+        let witness = initialize_witness();
 
         let (bld, info) = compile_verifier();
         let wires_bits = bld.eval_gates(&witness.to_bits());
 
         let output_value = wires_bits[info.output_index];
-        println!("output_value");
-        // let start = Instant::now();
-        // let total_gates = circuit.gate_counts();
-        // println!("gate_counts time: {:?}", start.elapsed());
-        // total_gates.print();
-        //
-        // for gate in &mut circuit.1 {
-        //     gate.evaluate();
-        // }
-        // assert!(circuit.0[0].borrow().get_value());
+        println!("output_value: {}", output_value);
+
+        let stats = bld.gate_counts();
+        println!("Gate counts: {:?}", stats);
     }
 }

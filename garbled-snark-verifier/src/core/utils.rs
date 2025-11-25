@@ -1,11 +1,8 @@
-use std::{cell::RefCell, rc::Rc, slice, sync::atomic::AtomicU32};
-use std::collections::HashMap;
-use std::io::Write;
+use std::{slice, sync::atomic::AtomicU32};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    bag::{Circuit, Gate, S, Wire},
-    core::gate::{GateType, gate_garbled},
+    bag::S,
 };
 
 use std::sync::atomic::Ordering;

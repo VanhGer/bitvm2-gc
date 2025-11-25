@@ -1,5 +1,4 @@
 use crate::{
-    bag::*,
     dv_bn254::{
         basic::{full_adder, full_subtracter, half_adder, half_subtracter},
         bigint::utils::bits_from_biguint,
@@ -174,17 +173,10 @@ impl U254{
 
 #[cfg(test)]
 mod tests {
-    use crate::dv_bn254::bigint::{
-        U254,
-        utils::{biguint_from_wires, random_biguint_n_bits},
-    };
+    use crate::dv_bn254::bigint::U254;
     use num_bigint::BigUint;
-    use std::str::FromStr;
-    use crate::circuits::sect233k1::builder::{CircuitAdapter, CircuitTrait};
-    use crate::dv_bn254::basic::full_adder;
-    use crate::dv_bn254::bigint::add::add_generic;
+    use crate::circuits::sect233k1::builder::CircuitAdapter;
     use crate::dv_bn254::bigint::utils::{biguint_from_bits, bits_from_biguint};
-    use crate::dv_bn254::fq::Fq;
 
     #[test]
     fn test_odd_part_vjp() {

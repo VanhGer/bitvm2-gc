@@ -1,11 +1,10 @@
 use super::U254;
 use crate::dv_bn254::basic::{multiplexer, not};
 use crate::dv_bn254::bigint::utils::bits_from_biguint;
-use crate::{bag::*, dv_bn254::basic::selector};
+use crate::{dv_bn254::basic::selector};
 use ark_ff::Zero;
 use num_bigint::BigUint;
 use crate::circuits::sect233k1::builder::CircuitTrait;
-use crate::dv_bn254::fr::FR_LEN;
 
 pub fn self_or_zero_generic<T: CircuitTrait>(bld: &mut T, a: &[usize], s: usize, len: usize) -> Vec<usize> {
     assert_eq!(a.len(), len);
@@ -163,16 +162,14 @@ impl U254 {
 
 #[cfg(test)]
 mod tests {
-    use rand::Rng;
     use std::str::FromStr;
 
     use super::*;
     use crate::circuits::{
         bigint::{
             U254,
-            utils::{biguint_from_wires, random_biguint_n_bits},
+            utils::{random_biguint_n_bits},
         },
-        bn254::utils::create_rng,
     };
 
     #[test]
@@ -248,76 +245,4 @@ mod tests {
         assert_eq!(a < b, circuit.0[0].borrow().get_value());
     }
 
-    #[test]
-    fn test_select() {
-        let a = random_biguint_n_bits(254);
-        let b = random_biguint_n_bits(254);
-        let s = new_wirex();
-        s.borrow_mut().set(true);
-        let circuit =
-            U254::select(U254::wires_set_from_number(&a), U254::wires_set_from_number(&b), s);
-        circuit.gate_counts().print();
-        for mut gate in circuit.1 {
-            gate.evaluate();
-        }
-        let c = biguint_from_wires(circuit.0);
-        assert_eq!(a, c);
-    }
-
-    #[test]
-    fn test_self_or_zero() {
-        let a = random_biguint_n_bits(254);
-
-        let s = new_wirex();
-        s.borrow_mut().set(true);
-        let circuit = U254::self_or_zero(U254::wires_set_from_number(&a), s);
-        circuit.gate_counts().print();
-        for mut gate in circuit.1 {
-            gate.evaluate();
-        }
-        let c = biguint_from_wires(circuit.0);
-        assert_eq!(a, c);
-
-        let s = new_wirex();
-        s.borrow_mut().set(false);
-        let circuit = U254::self_or_zero(U254::wires_set_from_number(&a), s);
-        for mut gate in circuit.1 {
-            gate.evaluate();
-        }
-        let c = biguint_from_wires(circuit.0);
-        assert_eq!(c, BigUint::ZERO);
-    }
-
-    #[test]
-    fn test_multiplexer() {
-        let w = 5;
-        let n = 2_usize.pow(w as u32);
-        let a: Vec<BigUint> = (0..n).map(|_| random_biguint_n_bits(254)).collect();
-        let s: Wires = (0..w).map(|_| new_wirex()).collect();
-
-        let mut rng = create_rng();
-        let mut a_wires = Vec::new();
-        for e in a.iter() {
-            a_wires.push(U254::wires_set_from_number(e));
-        }
-
-        let mut u = 0;
-        for wire in s.iter().rev() {
-            let x = rng.r#gen();
-            u = u + u + if x { 1 } else { 0 };
-            wire.borrow_mut().set(x);
-        }
-
-        let circuit = U254::multiplexer(a_wires, s.clone(), w);
-        circuit.gate_counts().print();
-
-        for mut gate in circuit.1 {
-            gate.evaluate();
-        }
-
-        let result = biguint_from_wires(circuit.0);
-        let expected = a[u].clone();
-
-        assert_eq!(result, expected);
-    }
 }

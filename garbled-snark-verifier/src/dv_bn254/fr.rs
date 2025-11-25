@@ -1,5 +1,4 @@
 use crate::{
-    bag::*,
     dv_bn254::{fp254impl::Fp254Impl},
     circuits::bn254::utils::create_rng
 };
@@ -8,7 +7,6 @@ use num_bigint::BigUint;
 use crate::circuits::sect233k1::builder::CircuitTrait;
 use crate::dv_bn254::basic::not;
 use crate::dv_bn254::bigint::U254;
-use crate::dv_bn254::fq::Fq;
 
 pub const FR_LEN: usize = 254;
 #[derive(Debug, Clone)]
@@ -123,7 +121,7 @@ impl Fr {
         Self::from_montgomery(Self::from_wires(bld, fr))
     }
 
-    // ───────────────────  a ≥ b   (one wire, MSB first)  ─────────────────────
+    // ───────────────────  a ≥ c   (one wire, MSB first)  ─────────────────────
     //  Gate cost: 4·W XOR + 3·W AND
     pub(crate) fn ge_unsigned<T: CircuitTrait>(bld: &mut T, a: &[usize], c: &[usize]) -> usize {
         assert_eq!(a.len(), Self::N_BITS);

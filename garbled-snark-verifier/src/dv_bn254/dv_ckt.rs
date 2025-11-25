@@ -3,6 +3,7 @@
 
 use crate::circuits::sect233k1::builder::{CircuitAdapter, CircuitTrait};
 use crate::circuits::sect233k1::blake3_ckt;
+use crate::dv_bn254::bigint::U254;
 use crate::dv_bn254::fp254impl::Fp254Impl;
 use super::{
     fr::{
@@ -17,10 +18,6 @@ const PUBINP_BIT_LEN: usize = 2 * FR_LEN;
 const TRAPDOOR_BIT_LEN: usize = FR_LEN * 3;
 
 pub(crate) const WITNESS_BIT_LEN: usize = PROOF_BIT_LEN + PUBINP_BIT_LEN + TRAPDOOR_BIT_LEN;
-pub(crate) fn u8_to_bits_le(n: u8) -> [bool; 8] {
-    let v: Vec<bool> = (0..8).map(|i| (n >> i) & 1 != 0).collect();
-    v.try_into().unwrap()
-}
 
 pub fn get_input_indexes(bld: &mut CircuitAdapter) -> (Proof, PublicInputs, Trapdoor) {
     let secrets = Trapdoor { 
@@ -36,10 +33,10 @@ pub fn get_input_indexes(bld: &mut CircuitAdapter) -> (Proof, PublicInputs, Trap
     let kzg_k = G1Projective::wires(bld);
 
     let proof = Proof {
-        commit_p,
-        kzg_k,
-        a0: Fr(bld.fresh()),
-        b0: Fr(bld.fresh()),
+        mont_commit_p: commit_p,
+        mont_kzg_k: kzg_k,
+        mont_a0: Fr(bld.fresh()),
+        mont_b0: Fr(bld.fresh()),
     };
     (proof, rpin, secrets)
 }
@@ -61,15 +58,15 @@ pub fn get_input_indexes(bld: &mut CircuitAdapter) -> (Proof, PublicInputs, Trap
 
 /// Proof wires
 #[derive(Debug, Clone)]
-pub(crate) struct Proof {
+pub struct Proof {
     /// commit_p
-    pub commit_p: G1Projective, // commitment to witness folding & quotient
+    pub mont_commit_p: G1Projective, // commitment to witness folding & quotient
     /// kzg_k
-    pub kzg_k: G1Projective, // combined KZG evaluation proof
+    pub mont_kzg_k: G1Projective, // combined KZG evaluation proof
     /// a0
-    pub a0: Fr,
+    pub mont_a0: Fr,
     /// b0
-    pub b0: Fr,
+    pub mont_b0: Fr,
 }
 
 /// RawPublicInputs
@@ -190,12 +187,6 @@ fn get_fs_challenge<T: CircuitTrait>(
     let root_hash_flat: Vec<usize> = root_hash.into_iter().flatten().collect();
     let root_fr_inner: [usize; FR_LEN] = root_hash_flat[0..FR_LEN].try_into().unwrap();
 
-    // get runtime hash
-    let mut temp = public_inputs_hash;
-    temp[31..].copy_from_slice(&[zero_byte; 1]); // mask top 1 bytes, 256-8=248 bits
-    let temp_flat: Vec<usize> = temp.into_iter().flatten().collect();
-    let temp_fr_inner: [usize; FR_LEN] = temp_flat[0..FR_LEN].try_into().unwrap();
-
     Fr(root_fr_inner)
 }
 
@@ -256,21 +247,20 @@ pub(crate) fn verify<T: CircuitTrait>(
     secrets: Trapdoor,
 ) -> usize {
     let is_proof_commit_p_on_curve =
-        G1Projective::emit_projective_montgomery_point_is_on_curve(bld, &proof.commit_p);
+        G1Projective::emit_projective_montgomery_point_is_on_curve(bld, &proof.mont_commit_p);
     let is_proof_kzg_k_on_curve =
-        G1Projective::emit_projective_montgomery_point_is_on_curve(bld, &proof.kzg_k);
+        G1Projective::emit_projective_montgomery_point_is_on_curve(bld, &proof.mont_kzg_k);
 
     let one_wire = bld.one();
-    let fr_modulus = Fr::wires_set(bld, ark_bn254::Fr::from(Fr::modulus_as_biguint()));
-    let proof_a0_invalid = Fr::ge_unsigned(bld, &proof.a0.0, &fr_modulus.0); // a0 should be less than modulus
-    let proof_b0_invalid = Fr::ge_unsigned(bld, &proof.b0.0, &fr_modulus.0);
+    let fr_modulus = U254::wires_set_from_number(bld, &Fr::modulus_as_biguint());
+    let proof_a0_invalid = Fr::ge_unsigned(bld, &proof.mont_a0.0, &fr_modulus); // a0 should be less than modulus
+    let proof_b0_invalid = Fr::ge_unsigned(bld, &proof.mont_b0.0, &fr_modulus);
     let proof_scalars_invalid = bld.or_wire(proof_a0_invalid, proof_b0_invalid); // either invalid
     let proof_scalars_valid = bld.xor_wire(proof_scalars_invalid, one_wire); // both scalars valid
     let decoded_points_valid = bld.and_wire(is_proof_commit_p_on_curve, is_proof_kzg_k_on_curve); // both points valid
 
     let fs_challenge_alpha =
-        get_fs_challenge(bld, &proof.commit_p, public_inputs.public_inputs.clone(), vec![], vec![]);
-
+        get_fs_challenge(bld, &proof.mont_commit_p, public_inputs.public_inputs.clone(), vec![], vec![]);
     let i0 = {
         let t0 = Fr::mul_montgomery(bld, &public_inputs.public_inputs[1].0, &fs_challenge_alpha.0);
         Fr::add(bld, &t0, &public_inputs.public_inputs[0].0)
@@ -278,33 +268,40 @@ pub(crate) fn verify<T: CircuitTrait>(
 
     let r0 = {
         //&proof.a0 * &proof.b0 - &proof.i0
-        let t0 = Fr::mul_montgomery(bld, &proof.a0.0, &proof.b0.0);
+        let t0 = Fr::mul_montgomery(bld, &proof.mont_a0.0, &proof.mont_b0.0);
         Fr::sub(bld, &t0, &i0)
     };
-    //
-    // // Step 3. Compute u₀ and v₀
+
+    // Step 3. Compute u₀ and v₀
     let u0 = {
         //(proof.a0 + secrets.delta * (proof.b0 + secrets.delta * r0)) * secrets.epsilon
         let delta_r0 = Fr::mul_montgomery(bld, &secrets.delta.0, &r0);
-        let b0_plus = Fr::add(bld, &proof.b0.0, &delta_r0);
+        let b0_plus = Fr::add(bld, &proof.mont_b0.0, &delta_r0);
         let inner = Fr::mul_montgomery(bld, &secrets.delta.0, &b0_plus);
-        let sum = Fr::mul_montgomery(bld, &proof.a0.0, &inner);
+        let sum = Fr::add(bld, &proof.mont_a0.0, &inner);
 
         Fr::mul_montgomery(bld, &sum, &secrets.epsilon.0)
     };
-    let tmp0 = Fr::mul_montgomery(bld, &secrets.tau.0, &fs_challenge_alpha.0);
+
+    let tmp0 = Fr::sub(bld, &secrets.tau.0, &fs_challenge_alpha.0);
     let v0 = Fr::mul_montgomery(bld, &tmp0, &secrets.epsilon.0);
 
     let generator = G1Projective::wires_set_montgomery_generator(bld);
     let lhs = G1Projective::msm_montgomery_circuit(
         bld,
         &[u0, v0],
-        &[generator, proof.kzg_k.to_vec_wires()]
+        &[generator, proof.mont_kzg_k.to_vec_wires()]
     );
-    // let v0_k = emit_mul_windowed_tau(bld, &v0, &proof_kzg_k, w);
-    // let u0_g = emit_mul_windowed_tau(bld, &u0, &generator, w);
-    // let lhs = emit_point_add(bld, &v0_k, &u0_g);
-    let rhs = proof.commit_p.to_vec_wires();
+
+    let mont_r = ark_bn254::Fr::from(Fr::montgomery_r_as_biguint());
+    let mont_r_wires = Fr::wires_set(bld, mont_r.clone());
+
+    let rhs = G1Projective::scalar_mul_montgomery_circuit(
+        bld,
+        &mont_r_wires.0.to_vec(),
+        &proof.mont_commit_p.to_vec_wires(),
+    );
+
     let verify_success = G1Projective::equal(bld, &lhs, &rhs);
     let eq_with_valid_points = bld.and_wire(verify_success, decoded_points_valid);
     bld.and_wire(eq_with_valid_points, proof_scalars_valid)
@@ -313,16 +310,15 @@ pub(crate) fn verify<T: CircuitTrait>(
 #[cfg(test)]
 mod test {
     use std::str::FromStr;
-    use ark_ec::PrimeGroup;
     use crate::circuits::sect233k1::builder::{CircuitAdapter, CircuitTrait};
+    use crate::dv_bn254::bigint::U254;
     use crate::dv_bn254::dv_ckt::{get_fs_challenge, get_input_indexes};
     use crate::dv_bn254::dv_ref::{FrRef, ProofRef, PublicInputsRef, TrapdoorRef, VerifierPayloadRef};
     use crate::dv_bn254::fp254impl::Fp254Impl;
     use crate::dv_bn254::fr::Fr;
     use crate::dv_bn254::g1::G1Projective;
 
-    #[test]
-    fn test_compute_u0_v0() {
+    fn initialize_witness() -> VerifierPayloadRef{
         // Prepare VerifierPayloadRef
         let tau = FrRef::from_str(
             "16182941859318853681113132547625168061780848020606917705886909352328641449447",
@@ -368,12 +364,46 @@ mod test {
             public_input: PublicInputsRef { public_inputs },
             trapdoor: TrapdoorRef { tau, delta, epsilon },
         };
+        witness
+    }
+
+    #[test]
+    fn test_proof_valid() {
+        let witness = initialize_witness();
+        let mut bld = CircuitAdapter::default();
+        let (proof, _, _) = get_input_indexes(&mut bld);
+
+        let is_proof_commit_p_on_curve =
+            G1Projective::emit_projective_montgomery_point_is_on_curve(&mut bld, &proof.mont_commit_p);
+        let is_proof_kzg_k_on_curve =
+            G1Projective::emit_projective_montgomery_point_is_on_curve(&mut bld, &proof.mont_kzg_k);
+
+        let one_wire = bld.one();
+        let fr_modulus = U254::wires_set_from_number(&mut bld, &Fr::modulus_as_biguint());
+        let proof_a0_invalid = Fr::ge_unsigned(&mut bld, &proof.mont_a0.0, &fr_modulus); // a0 should be less than modulus
+        let proof_b0_invalid = Fr::ge_unsigned(&mut bld, &proof.mont_b0.0, &fr_modulus);
+        let proof_scalars_invalid = bld.or_wire(proof_a0_invalid, proof_b0_invalid); // either invalid
+        let proof_scalars_valid = bld.xor_wire(proof_scalars_invalid, one_wire); // both scalars valid
+        let decoded_points_valid = bld.and_wire(is_proof_commit_p_on_curve, is_proof_kzg_k_on_curve); // both points valid
+        let valid = bld.and_wire(proof_scalars_valid, decoded_points_valid);
+        // eval
+        let wires_bits = bld.eval_gates(&witness.to_bits());
+        let valid_val = wires_bits[valid];
+        assert!(valid_val);
+        let stats = bld.gate_counts();
+        println!("{stats}");
+    }
+
+
+    #[test]
+    fn test_compute_u0_v0() {
+        let witness = initialize_witness();
 
         let mut bld = CircuitAdapter::default();
         let (proof, rpin, secrets) = get_input_indexes(&mut bld);
 
         let fs_challenge_alpha =
-            get_fs_challenge(&mut bld, &proof.commit_p, rpin.public_inputs.clone(), vec![], vec![]);
+            get_fs_challenge(&mut bld, &proof.mont_commit_p, rpin.public_inputs.clone(), vec![], vec![]);
         let i0 = {
             let t0 = Fr::mul_montgomery(&mut bld, &rpin.public_inputs[1].0, &fs_challenge_alpha.0);
             Fr::add(&mut bld, &t0, &rpin.public_inputs[0].0)
@@ -381,7 +411,7 @@ mod test {
 
         let r0 = {
             //&proof.a0 * &proof.b0 - &proof.i0
-            let t0 = Fr::mul_montgomery(&mut bld, &proof.a0.0, &proof.b0.0);
+            let t0 = Fr::mul_montgomery(&mut bld, &proof.mont_a0.0, &proof.mont_b0.0);
             Fr::sub(&mut bld, &t0, &i0)
         };
 
@@ -389,9 +419,9 @@ mod test {
         let u0 = {
             //(proof.a0 + secrets.delta * (proof.b0 + secrets.delta * r0)) * secrets.epsilon
             let delta_r0 = Fr::mul_montgomery(&mut bld, &secrets.delta.0, &r0);
-            let b0_plus = Fr::add(&mut bld, &proof.b0.0, &delta_r0);
+            let b0_plus = Fr::add(&mut bld, &proof.mont_b0.0, &delta_r0);
             let inner = Fr::mul_montgomery(&mut bld, &secrets.delta.0, &b0_plus);
-            let sum = Fr::add(&mut bld, &proof.a0.0, &inner);
+            let sum = Fr::add(&mut bld, &proof.mont_a0.0, &inner);
 
             Fr::mul_montgomery(&mut bld, &sum, &secrets.epsilon.0)
         };
@@ -443,7 +473,6 @@ mod test {
         let mont_v0 = ark_bn254::Fr::from_str("6813834760176976181591963068295107428614621550608555479227816612274682117051").unwrap();
         let mont_r = ark_bn254::Fr::from(Fr::montgomery_r_as_biguint());
 
-
         let mut bld = CircuitAdapter::default();
         let mont_p_wires = G1Projective::wires(&mut bld);
         let mont_k_wires = G1Projective::wires(&mut bld);
@@ -476,12 +505,12 @@ mod test {
         let lhs_bits = lhs_wires.iter().map(|id| wires_bits[*id]).collect();
         let rhs_bits = rhs_wires.iter().map(|id| wires_bits[*id]).collect();
 
-        let stats = bld.gate_counts();
-        println!("{stats}");
-
         let lhs = G1Projective::from_bits_unchecked(lhs_bits);
         let rhs = G1Projective::from_bits_unchecked(rhs_bits);
         assert_eq!(lhs, rhs);
+
+        let stats = bld.gate_counts();
+        println!("{stats}");
     }
 }
 
