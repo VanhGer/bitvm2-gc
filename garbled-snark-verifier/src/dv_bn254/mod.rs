@@ -8,3 +8,4 @@ pub mod fp254impl;
 pub mod g1;
 pub mod fr;
 pub mod dv_ref;
+pub mod types;

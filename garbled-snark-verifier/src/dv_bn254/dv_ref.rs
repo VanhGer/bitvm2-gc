@@ -1,6 +1,8 @@
+use ark_serialize::CanonicalDeserialize;
 use num_bigint::BigUint;
 use crate::dv_bn254::fr::FR_LEN;
 use crate::dv_bn254::g1::{G1Projective, G1_PROJECTIVE_LEN};
+use crate::dv_bn254::types::{RawProof, RawTrapdoor, RawVerifierPayload};
 
 const PROOF_BIT_LEN: usize = G1_PROJECTIVE_LEN * 2 + FR_LEN * 2;
 const PUBINP_BIT_LEN: usize = 2 * FR_LEN;
@@ -33,6 +35,27 @@ impl VerifierPayloadRef {
 
         witness.try_into().unwrap()
     }
+
+    pub fn load_witness_from_files(
+        proof_path: &str,
+        public_inputs_path: &str,
+        trapdoor_path: &str,
+    ) -> VerifierPayloadRef {
+        // Read and deserialize proof
+        let proof_data = std::fs::read(proof_path).unwrap();
+        let proof: RawProof = bincode::deserialize(&proof_data).unwrap();
+
+        let public_inputs_data = std::fs::read(public_inputs_path).unwrap();
+        let public_inputs = Vec::<ark_bn254::Fr>::deserialize_compressed(&public_inputs_data[..]).unwrap();
+
+        let trapdoor_data = std::fs::read(trapdoor_path).unwrap();
+        let trapdoor: RawTrapdoor = RawTrapdoor::deserialize_compressed(&trapdoor_data[..]).unwrap();
+
+        let w = RawVerifierPayload { proof, public_inputs, trapdoor };
+
+        w.into()
+    }
+
 }
 
 #[derive(Debug)]
@@ -43,9 +66,9 @@ pub struct ProofRef {
     /// kzg_k
     pub mont_kzg_k: ark_bn254::G1Projective, // combined KZG evaluation proof in montgomery form
     /// a0
-    pub a0: FrRef,
+    pub mont_a0: FrRef,
     /// b0
-    pub b0: FrRef,
+    pub mont_b0: FrRef,
 }
 
 #[derive(Debug)]
@@ -57,8 +80,8 @@ impl ProofRef {
     pub fn to_bits(&self) -> [bool; PROOF_BIT_LEN] {
         let mut commit_p = G1Projective::to_bits(self.mont_commit_p);
         let mut kzg_k = G1Projective::to_bits(self.mont_kzg_k);
-        let mut a0 = frref_to_bits(&self.a0).to_vec();
-        let mut b0 = frref_to_bits(&self.b0).to_vec();
+        let mut a0 = frref_to_bits(&self.mont_a0).to_vec();
+        let mut b0 = frref_to_bits(&self.mont_b0).to_vec();
 
         let mut witness = vec![];
 
@@ -117,4 +140,16 @@ pub fn frref_to_bits(n: &FrRef) -> [bool; FR_LEN] {
         bits[i] = r != 0;
     }
     bits
+}
+
+
+#[test]
+#[ignore]
+fn test_load_witness_from_files_vjp() {
+    let witness = VerifierPayloadRef::load_witness_from_files(
+        "./data/dv-proof",
+        "./data/public_inputs.bin",
+        "./data/trapdoor.bin",
+    );
+    println!("witness: {:?}", witness);
 }

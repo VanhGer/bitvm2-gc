@@ -66,7 +66,7 @@ mod test {
         ];
 
         let witness = VerifierPayloadRef {
-            proof: ProofRef { mont_commit_p, mont_kzg_k, a0, b0 },
+            proof: ProofRef { mont_commit_p, mont_kzg_k, mont_a0: a0, mont_b0: b0 },
             public_input: PublicInputsRef { public_inputs },
             trapdoor: TrapdoorRef { tau, delta, epsilon },
         };

@@ -3,8 +3,8 @@ use tracing::info;
 
 use zkm_sdk::{ProverClient, ZKMProofWithPublicValues, ZKMStdin, include_elf, utils as sdk_utils};
 
-use garbled_snark_verifier::circuits::dv_snark::dv_snark_verifier_circuit;
-use garbled_snark_verifier::{bag::Circuit, circuits::sect233k1::types::load_witness_from_files};
+use garbled_snark_verifier::dv_bn254::dv_snark::dv_snark_verifier_circuit;
+use garbled_snark_verifier::{bag::Circuit, dv_bn254::dv_ref::VerifierPayloadRef};
 use crate::utils::{SUB_CIRCUIT_MAX_GATES, SUB_INPUT_GATES_PARTS};
 
 mod mem_fs;
@@ -15,7 +15,7 @@ const ELF: &[u8] = include_elf!("verifiable-circuit");
 
 fn custom_dv_snark_circuit() -> Circuit {
     //read witness from files
-    let witness = load_witness_from_files(
+    let witness = VerifierPayloadRef::load_witness_from_files(
         "src/data/dv-proof",
         "src/data/public_inputs.bin",
         "src/data/trapdoor.bin",

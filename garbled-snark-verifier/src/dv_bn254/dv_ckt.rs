@@ -41,21 +41,6 @@ pub fn get_input_indexes(bld: &mut CircuitAdapter) -> (Proof, PublicInputs, Trap
     (proof, rpin, secrets)
 }
 
-// /// Serialize VerifierPayloadRef
-// pub fn to_bits(&self) -> [bool; WITNESS_BIT_LEN] {
-//     let mut secret_bits = self.trapdoor.to_bits().to_vec();
-//     let mut public_inputs = self.public_input.to_bits().to_vec();
-//     let mut proof_bits = self.proof.to_bits().to_vec();
-//
-//     let mut witness = vec![];
-//
-//     witness.append(&mut secret_bits);
-//     witness.append(&mut public_inputs);
-//     witness.append(&mut proof_bits);
-//
-//     witness.try_into().unwrap()
-// }
-
 /// Proof wires
 #[derive(Debug, Clone)]
 pub struct Proof {
@@ -369,7 +354,7 @@ mod test {
         ];
 
         let witness = VerifierPayloadRef {
-            proof: ProofRef { mont_commit_p, mont_kzg_k, a0, b0 },
+            proof: ProofRef { mont_commit_p, mont_kzg_k, mont_a0: a0, mont_b0: b0 },
             public_input: PublicInputsRef { public_inputs },
             trapdoor: TrapdoorRef { tau, delta, epsilon },
         };
