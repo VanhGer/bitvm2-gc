@@ -32,7 +32,7 @@ fn custom_simple_circuit() -> Circuit {
     for i in 0..N {
         let d = bld.xor_wire(a[i], b[i]);
         let xd = bld.and_wire(sel, d);
-        res[i] = bld.xor_wire(xd, a[i]);
+        res[i] = bld.or_wire(xd, a[i]);
         // res[i] = d;
     }
 
