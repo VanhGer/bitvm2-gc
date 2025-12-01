@@ -29,8 +29,9 @@ fn custom_dv_snark_circuit() -> Circuit {
 
     let start = Instant::now();
     for (i, mut gate) in &mut circuit.1.iter_mut().enumerate() {
-        println!("eval gate: {:?}", i);
-        gate.evaluate();
+        if gate.evaluate_bench().is_err() {
+            panic!("gate {} evaluation failed", i);
+        }
     }
     // assert!(circuit.0.last().borrow().get_value());
     println!("circuit output: {:?}", circuit.0.last().unwrap().borrow().get_value());

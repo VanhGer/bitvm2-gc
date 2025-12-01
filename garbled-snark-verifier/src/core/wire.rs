@@ -40,8 +40,8 @@ impl Wire {
         self.value.unwrap()
     }
 
-    pub fn check_value(&self) -> bool {
-        self.value.is_some()
+    pub fn get_value_option(&self) -> Option<bool> {
+        self.value
     }
 
     pub fn get_label(&self) -> S {

@@ -215,17 +215,29 @@ impl Gate {
     }
 
     pub fn evaluate(&mut self) {
-        // todo: remove after benchmarking.
-        if self.wire_a.borrow().check_value() == false {
-            self.wire_a.borrow_mut().set(false);
-        }
-        if self.wire_b.borrow().check_value() == false {
-            self.wire_b.borrow_mut().set(false);
-        }
-        
         self.wire_c
             .borrow_mut()
             .set((self.f())(self.wire_a.borrow_mut().get_value(), self.wire_b.borrow_mut().get_value()));
+    }
+    
+    pub fn evaluate_bench(&mut self) -> Result<(), String>{
+        // todo: remove after benchmarking.
+        if self.wire_a.borrow().get_value_option().is_none() {
+            self.wire_a.borrow_mut().set(false);
+        }
+        if self.wire_b.borrow().get_value_option().is_none() {
+            self.wire_b.borrow_mut().set(false);
+        }
+
+        let wire_a = self.wire_a.borrow().get_value_option();
+        let wire_b = self.wire_b.borrow().get_value_option();
+        if wire_a.is_none() || wire_b.is_none() {
+            return Err("Wire values is None".to_string());
+        }
+        self.wire_c
+            .borrow_mut()
+            .set((self.f())(wire_a.unwrap(), wire_b.unwrap()));
+        Ok(())
     }
 
     pub fn garbled(&self) -> Option<S> {
