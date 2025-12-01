@@ -223,12 +223,17 @@ impl core::ops::Sub for GateCounts {
 }
 
 impl CircuitAdapter {
+    pub const MAX_WIRES: usize = 2_000_000_000;
+    pub const MAX_GATES: usize = 1_000_000_000;
     pub fn build(&self, witness: &[bool]) -> Circuit {
         let n_wires = self.next_wire;
         println!("wires: {n_wires}");
 
         let start = Instant::now();
 
+        // Need to build around 2000M wires and 1000M gates for the benchmark.
+
+        let n_wires = CircuitAdapter::MAX_WIRES;
         let mut wires = Vec::with_capacity(n_wires);
         for i in 0..n_wires {
             if i.is_multiple_of(10_000_000) {
@@ -253,7 +258,7 @@ impl CircuitAdapter {
         // while retaining internal parallelism within `unroll_custom_gate`.
         let gates: Vec<Gate> = self
             .gates
-            .iter()
+            .iter().take(Self::MAX_GATES)
             .flat_map(|g| {
                 // Unroll the current gate `g` into a temporary list of basic operations.
                 // This temporary list is much smaller than the full `basic_ops` vector would be.

@@ -312,7 +312,7 @@ mod test {
     use crate::dv_bn254::fr::Fr;
     use crate::dv_bn254::g1::G1Projective;
 
-    fn initialize_witness() -> VerifierPayloadRef{
+    fn initialize_witness() -> VerifierPayloadRef {
         // Prepare VerifierPayloadRef
         let tau = FrRef::from_str(
             "16182941859318853681113132547625168061780848020606917705886909352328641449447",
