@@ -28,7 +28,8 @@ fn custom_dv_snark_circuit() -> Circuit {
     info!(step = "Gen circuit", elapsed = ?elapsed);
 
     let start = Instant::now();
-    for gate in &mut circuit.1 {
+    for (i, mut gate) in &mut circuit.1.iter_mut().enumerate() {
+        println!("eval gate: {:?}", i);
         gate.evaluate();
     }
     // assert!(circuit.0.last().borrow().get_value());
