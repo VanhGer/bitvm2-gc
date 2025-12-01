@@ -33,8 +33,9 @@ fn custom_dv_snark_circuit() -> Circuit {
             panic!("gate {} evaluation failed", i);
         }
     }
+    // todo: uncomment later
     // assert!(circuit.0.last().borrow().get_value());
-    println!("circuit output: {:?}", circuit.0.last().unwrap().borrow().get_value());
+    // println!("circuit output: {:?}", circuit.0.last().unwrap().borrow().get_value());
     let elapsed = start.elapsed();
     info!(step = "Eval circuit", elapsed = ?elapsed);
 
