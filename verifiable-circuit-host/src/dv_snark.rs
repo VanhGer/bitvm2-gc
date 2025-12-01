@@ -20,6 +20,7 @@ fn custom_dv_snark_circuit() -> Circuit {
         "src/data/public_inputs.bin",
         "src/data/trapdoor.bin",
     );
+    info!("loaded witness from files");
 
     let start = Instant::now();
     let mut circuit = dv_snark_verifier_circuit(&witness);
