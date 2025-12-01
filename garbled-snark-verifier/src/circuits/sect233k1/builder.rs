@@ -223,8 +223,8 @@ impl core::ops::Sub for GateCounts {
 }
 
 impl CircuitAdapter {
-    pub const MAX_WIRES: usize = 2_000_000_000;
-    pub const MAX_GATES: usize = 1_000_000_000;
+    pub const MAX_WIRES: usize = 1_000_000_000;
+    pub const MAX_GATES: usize = 500_000_000;
     pub fn build(&self, witness: &[bool]) -> Circuit {
         let n_wires = self.next_wire;
         println!("wires: {n_wires}");

@@ -40,6 +40,10 @@ impl Wire {
         self.value.unwrap()
     }
 
+    pub fn check_value(&self) -> bool {
+        self.value.is_some()
+    }
+
     pub fn get_label(&self) -> S {
         assert!(self.label.is_some());
         self.label.unwrap()
