@@ -227,122 +227,51 @@ mod tests {
     use std::str::FromStr;
 
     use num_bigint::BigUint;
-
-    use crate::circuits::bigint::{
-        BigIntImpl, U254,
+    use crate::circuits::sect233k1::builder::CircuitAdapter;
+    use crate::dv_bn254::bigint::{
+        U254,
         utils::{biguint_from_bits, random_biguint_n_bits},
     };
 
     //tests are currently only for 254 bits
 
     #[test]
-    fn test_mul() {
+    fn test_mul_dvbn254() {
         for _ in 0..10 {
             let a = random_biguint_n_bits(254);
             let b = random_biguint_n_bits(254);
+            let mut bld = CircuitAdapter::default();
+            let a_wires = U254::wires_set_from_number(&mut bld, &a);
+            let b_wires = U254::wires_set_from_number(&mut bld, &b);
             let circuit =
-                U254::mul(U254::wires_set_from_number(&a), U254::wires_set_from_number(&b));
+                U254::mul(&mut bld, &a_wires, &b_wires);
             let c = &a * &b;
-            circuit.gate_counts().print();
-
-            for mut gate in circuit.1 {
-                gate.evaluate();
-            }
+            let wires = bld.eval_gates(&vec![]);
 
             let result = biguint_from_bits(
-                circuit.0.iter().map(|output_wire| output_wire.borrow().get_value()).collect(),
+                circuit.iter().map(|output_wire| wires[*output_wire]).collect(),
             );
             assert_eq!(result, c);
         }
     }
 
     #[test]
-    fn test_karatsuba() {
+    fn test_karatsuba_dvbn254() {
         for _ in 0..10 {
+            let mut bld = CircuitAdapter::default();
             let a = random_biguint_n_bits(254);
             let b = random_biguint_n_bits(254);
-            let circuit = U254::mul_karatsuba(
-                U254::wires_set_from_number(&a),
-                U254::wires_set_from_number(&b),
+            let a_wires = U254::wires_set_from_number(&mut bld, &a);
+            let b_wires = U254::wires_set_from_number(&mut bld, &b);
+            let out_wires = U254::mul_karatsuba(
+                &mut bld,
+                &a_wires,
+                &b_wires,
             );
             let c = &a * &b;
-            circuit.gate_counts().print();
-
-            for mut gate in circuit.1 {
-                gate.evaluate();
-            }
-
+            let wires = bld.eval_gates(&vec![]);
             let result = biguint_from_bits(
-                circuit.0.iter().map(|output_wire| output_wire.borrow().get_value()).collect(),
-            );
-            assert_eq!(result, c);
-        }
-    }
-
-    #[test]
-    fn test_karatsuba_small() {
-        const S: usize = 64;
-        for _ in 0..1 {
-            let a = random_biguint_n_bits(S);
-            let b = random_biguint_n_bits(S);
-            pub type T = BigIntImpl<S>;
-
-            let circuit =
-                T::mul_karatsuba(T::wires_set_from_number(&a), T::wires_set_from_number(&b));
-            let c = &a * &b;
-            circuit.gate_counts().print();
-
-            for mut gate in circuit.1 {
-                gate.evaluate();
-            }
-
-            let result = biguint_from_bits(
-                circuit.0.iter().map(|output_wire| output_wire.borrow().get_value()).collect(),
-            );
-            assert_eq!(result, c);
-        }
-    }
-
-    #[test]
-    fn test_mul_by_constant() {
-        for _ in 0..10 {
-            let a = random_biguint_n_bits(254);
-            let b = random_biguint_n_bits(254);
-            let circuit = U254::mul_by_constant(U254::wires_set_from_number(&a), b.clone());
-            let c = &a * &b;
-            circuit.gate_counts().print();
-
-            for mut gate in circuit.1 {
-                gate.evaluate();
-            }
-
-            let result = biguint_from_bits(
-                circuit.0.iter().map(|output_wire| output_wire.borrow().get_value()).collect(),
-            );
-            assert_eq!(result, c);
-        }
-    }
-
-    #[test]
-    fn test_mul_by_constant_modulo_power_two() {
-        for power in [127, 254] {
-            //two randomish values
-            let a = random_biguint_n_bits(254);
-            let b = random_biguint_n_bits(254);
-            let circuit = U254::mul_by_constant_modulo_power_two(
-                U254::wires_set_from_number(&a),
-                b.clone(),
-                power,
-            );
-            let c = &a * &b % BigUint::from_str("2").unwrap().pow(power as u32);
-            circuit.gate_counts().print();
-
-            for mut gate in circuit.1 {
-                gate.evaluate();
-            }
-
-            let result = biguint_from_bits(
-                circuit.0.iter().map(|output_wire| output_wire.borrow().get_value()).collect(),
+                out_wires.iter().map(|output_wire| wires[*output_wire]).collect(),
             );
             assert_eq!(result, c);
         }

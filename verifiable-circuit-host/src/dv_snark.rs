@@ -3,7 +3,7 @@ use tracing::info;
 
 use zkm_sdk::{ProverClient, ZKMProofWithPublicValues, ZKMStdin, include_elf, utils as sdk_utils};
 
-use garbled_snark_verifier::dv_bn254::dv_snark::dv_snark_verifier_circuit;
+use garbled_snark_verifier::dv_bn254::dv_snark::{dv_snark_verifier_bench_circuit};
 use garbled_snark_verifier::{bag::Circuit, dv_bn254::dv_ref::VerifierPayloadRef};
 use crate::utils::{SUB_CIRCUIT_MAX_GATES, SUB_INPUT_GATES_PARTS};
 
@@ -23,7 +23,8 @@ fn custom_dv_snark_circuit() -> Circuit {
     info!("loaded witness from files");
 
     let start = Instant::now();
-    let mut circuit = dv_snark_verifier_circuit(&witness);
+    // Todo: change to dv_snark_verifier_circuit later
+    let mut circuit = dv_snark_verifier_bench_circuit(&witness);
     let elapsed = start.elapsed();
     info!(step = "Gen circuit", elapsed = ?elapsed);
 
@@ -33,7 +34,7 @@ fn custom_dv_snark_circuit() -> Circuit {
             panic!("gate {} evaluation failed", i);
         }
     }
-    // todo: uncomment later
+    // todo: uncomment with dv_snark_verifier_circuit
     // assert!(circuit.0.last().borrow().get_value());
     // println!("circuit output: {:?}", circuit.0.last().unwrap().borrow().get_value());
     let elapsed = start.elapsed();
@@ -68,7 +69,7 @@ fn main() {
         std::array::from_fn(|_| Vec::new());
     for part in 0..SUB_INPUT_GATES_PARTS {
         sub_gates[part] = mem_fs::MemFile::read(format!("garbled_gates_{}.bin", part)).unwrap();
-        // sub_gates = std::fs::read(format!("garbled_gates_{}.bin", part)).unwrap();
+        // sub_gates[part] = std::fs::read(format!("garbled_gates_{}.bin", part)).unwrap();
         info!("sub_gates part {} size: {:?} bytes", part, sub_gates[part].len());
     }
     let sub_wires = mem_fs::MemFile::read("garbled_wires.bin").unwrap();

@@ -88,7 +88,7 @@ pub mod tests {
     use super::*;
 
     #[test]
-    fn test_random_biguint() {
+    fn test_random_biguint_dvbn254() {
         let u = random_biguint();
         println!("u: {:?}", u);
         let b = bits_from_biguint(&u);
@@ -98,7 +98,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_neg_pos_decomposition() {
+    fn test_neg_pos_decomposition_dvbn254() {
         for _ in 0..10 {
             let u = random_biguint();
             let b = bits_from_biguint(&u);

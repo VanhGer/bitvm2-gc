@@ -130,40 +130,6 @@ pub trait Fp254Impl: Sized {
         a_3
     }
 
-    // fn exp_by_constant_montgomery(a: Wires, b: BigUint) -> Circuit {
-    //     assert_eq!(a.len(), Self::N_BITS);
-    //     let mut circuit = Circuit::empty();
-    //
-    //     if b.is_zero() {
-    //         circuit.add_wires(Fq::wires_set_montgomery(ark_bn254::Fq::ONE));
-    //         return circuit;
-    //     }
-    //
-    //     if b.is_one() {
-    //         circuit.add_wires(a);
-    //         return circuit;
-    //     }
-    //
-    //     let b_bits = bits_from_biguint(&b);
-    //
-    //     let len = b_bits.len();
-    //     let mut i = len - 1;
-    //     while !b_bits[i] {
-    //         i -= 1;
-    //     }
-    //     let mut result = a.clone();
-    //     for b_bit in b_bits.iter().rev().skip(len - i) {
-    //         let result_square = circuit.extend(Self::square_montgomery(result.clone()));
-    //         if *b_bit {
-    //             result = circuit.extend(Self::mul_montgomery(a.clone(), result_square));
-    //         } else {
-    //             result = result_square;
-    //         }
-    //     }
-    //     circuit.add_wires(result);
-    //     circuit
-    // }
-
     fn montgomery_reduce<T: CircuitTrait>(bld: &mut T, x: &[usize]) -> Vec<usize> {
         let x_low = x[..254].to_vec();
         let x_high = x[254..].to_vec();
@@ -398,53 +364,4 @@ pub trait Fp254Impl: Sized {
 
         result
     }
-
-    // fn div6(a: Wires) -> Circuit {
-    //     assert_eq!(a.len(), Self::N_BITS);
-    //     let mut circuit = Circuit::empty();
-    //
-    //     let half = circuit.extend(Self::half(a.clone()));
-    //     let mut result = Fq::wires();
-    //     let mut r1 = new_wirex();
-    //     let mut r2 = new_wirex();
-    //     r1.borrow_mut().set(false);
-    //     r2.borrow_mut().set(false);
-    //     for i in 0..U254::N_BITS {
-    //         // msb to lsb
-    //         let j = U254::N_BITS - 1 - i;
-    //
-    //         // result wire
-    //         let r2_and_hj = new_wirex();
-    //         circuit.add(Gate::and(r2.clone(), half[j].clone(), r2_and_hj.clone()));
-    //         let result_wire = new_wirex();
-    //         circuit.add(Gate::or(r1.clone(), r2_and_hj.clone(), result_wire.clone()));
-    //         result[j] = result_wire.clone();
-    //         // update r1 r2 values
-    //         let not_hj = new_wirex();
-    //         let not_r2 = new_wirex();
-    //         circuit.add(Gate::not(half[j].clone(), not_hj.clone()));
-    //         circuit.add(Gate::not(r2.clone(), not_r2.clone()));
-    //         r1 = circuit.extend(selector(not_r2.clone(), r2.clone(), result_wire.clone()))[0]
-    //             .clone();
-    //         r2 = circuit.extend(selector(not_hj.clone(), half[j].clone(), result_wire.clone()))[0]
-    //             .clone();
-    //
-    //         // special case if 1 0 0 then 0 1 instead of 1 1 so we need to not r1 if 1 0 0 is the case
-    //         let not_r1 = new_wirex();
-    //         circuit.add(Gate::not(r1.clone(), not_r1.clone()));
-    //         let edge_case = new_wirex();
-    //         circuit.add(Gate::and(result_wire.clone(), not_hj, edge_case.clone()));
-    //         r1 = circuit.extend(selector(not_r1.clone(), r1.clone(), edge_case))[0].clone();
-    //     }
-    //     // residue for r2
-    //     let result_plus_one_third = circuit
-    //         .extend(U254::add_constant_without_carry(result.clone(), &Self::one_third_modulus()));
-    //     result = U254::select(bld, result_plus_one_third, result.clone(), r2.clone()));
-    //     // residue for r1
-    //     let result_plus_two_third = circuit
-    //         .extend(U254::add_constant_without_carry(result.clone(), &Self::two_third_modulus()));
-    //     result = U254::select(bld, result_plus_two_third, result.clone(), r1.clone()));
-    //     circuit.add_wires(result.clone());
-    //     circuit
-    // }
 }

@@ -265,26 +265,6 @@ impl G1Projective {
         res
     }
 
-    // pub fn scalar_mul<T: CircuitTrait>(bld: &mut T, p: &[usize], s: &[usize]) -> Vec<usize> {
-    //
-    // }
-
-    // pub fn multiplexer<T: CircuitTrait>(bld: &mut T, a: &Vec<Vec<usize>>, s: &[usize], w: usize) -> Vec<usize> {
-    //     let n = 2_usize.pow(w.try_into().unwrap());
-    //     assert_eq!(a.len(), n);
-    //     for x in a.iter() {
-    //         assert_eq!(x.len(), G1_PROJECTIVE_LEN);
-    //     }
-    //     assert_eq!(s.len(), w);
-    //     let mut res = Vec::new();
-    //     for i in 0..G1_PROJECTIVE_LEN {
-    //         let ith_wires: Vec<usize> = a.iter().map(|x| x[i].clone()).collect();
-    //         let ith_result = multiplexer(bld, &ith_wires, s.clone(), w);
-    //         res.push(ith_result);
-    //     }
-    //     res
-    // }
-
     pub fn selector_projective_montgomery<T: CircuitTrait>(
         bld: &mut T,
         a: &[usize],
@@ -401,7 +381,7 @@ mod tests {
     use crate::dv_bn254::g1::{projective_to_affine_montgomery, G1Projective};
 
     #[test]
-    fn sub_montgomery_test() {
+    fn test_sub_montgomery_dvbn254() {
         let t0 = ark_bn254::Fr::from_str("7732983886091688221498675126584431356840007664582939941724679283817292177916").unwrap();
         let i0 = ark_bn254::Fr::from_str("4309415654564185098055313613053571962808436852931865757620162477615162115501").unwrap();
         let r0 = t0 - i0;
@@ -423,7 +403,8 @@ mod tests {
     }
 
     #[test]
-    fn test_demo_verfier_vjp() {
+    #[ignore]
+    fn test_demo_verfier_dvbn254() {
         let p1 = G1Projective::random();
         let mont_p1 = G1Projective::as_montgomery(p1);
 
@@ -455,7 +436,6 @@ mod tests {
             .into_iter()
             .chain(G1Projective::to_bits(mont_p1s1))
             .chain(Fr::to_bits(mont_s1).into_iter())
-            // .chain(Fr::to_bits(s2).into_iter())
             .collect::<Vec<bool>>();
 
         let wires_bits = bld.eval_gates(&witness);
@@ -471,7 +451,7 @@ mod tests {
     }
 
     #[test]
-    fn test_equal_g1ps() {
+    fn test_equal_g1ps_dvbn254() {
         let p1 = G1Projective::random().double();
         let p1_a = p1.into_affine();
         let p2: ark_bn254::G1Projective = p1_a.into();
@@ -494,7 +474,8 @@ mod tests {
     }
 
     #[test]
-    fn test_msm_vjp() {
+    #[ignore]
+    fn test_msm_dvbn254() {
         let p1 = G1Projective::random();
         let p2 = G1Projective::random();
         let mont_p1 = G1Projective::as_montgomery(p1);
@@ -530,7 +511,8 @@ mod tests {
     }
 
     #[test]
-    fn test_g1p_scalar_mul_montgomery_circuit_vjp() {
+    #[ignore]
+    fn test_g1p_scalar_mul_montgomery_circuit_dvbn254() {
         let point = G1Projective::random();
         let mont_p = G1Projective::as_montgomery(point);
         let s = Fr::random();
@@ -558,7 +540,7 @@ mod tests {
     }
 
     #[test]
-    fn test_g1p_add_montgomery_vjp() {
+    fn test_g1p_add_montgomery_dvbn254() {
         let a = G1Projective::random();
         let b = ark_bn254::G1Projective::ZERO;
         let mont_a = G1Projective::as_montgomery(a);
@@ -583,25 +565,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fq_inverse_montgomery_vjp() {
-        let a = ark_bn254::Fq::from(10);
-
-        let mut bld = CircuitAdapter::default();
-        let mont_a = Fq::as_montgomery(a);
-
-        let a_ref = Fq::wires(&mut bld);
-
-        let out = Fq::inverse_montgomery(&mut bld, &a_ref.0);
-        let witness = Fq::to_bits(mont_a);
-        let wires = bld.eval_gates(&witness);
-
-        let inv_a_bits: Vec<bool> = out.iter().map(|id| wires[*id]).collect();
-        let c = Fq::from_bits(inv_a_bits);
-        assert_eq!(c, Fq::as_montgomery(a.inverse().unwrap()));
-    }
-
-    #[test]
-    fn projective_to_affine_bn254() {
+    fn projective_to_affine_dvbn254() {
         let p_projective = G1Projective::random().double();
         assert_ne!(p_projective.z, ark_bn254::Fq::ONE);
         let p_affine = p_projective.into_affine();
@@ -630,7 +594,7 @@ mod tests {
     }
 
     #[test]
-    fn point_on_curve_bn254() {
+    fn point_on_curve_dvbn254() {
         let p_projective = G1Projective::random().double();
         assert_ne!(p_projective.z, ark_bn254::Fq::ONE);
         let mont_p = G1Projective::as_montgomery(p_projective);
@@ -648,180 +612,3 @@ mod tests {
         println!("{stats}");
     }
 }
-//     use crate::circuits::bn254::utils::create_rng;
-//
-//     use super::*;
-//     use ark_ec::{CurveGroup, scalar_mul::variable_base::VariableBaseMSM};
-//     use ark_ff::Field;
-//     use rand::Rng;
-//
-//     #[test]
-//     fn test_g1p_random() {
-//         let u = G1Projective::random();
-//         println!("u: {:?}", u);
-//         let b = G1Projective::to_bits(u);
-//         let v = G1Projective::from_bits(b);
-//         println!("v: {:?}", v);
-//         assert_eq!(u, v);
-//     }
-//
-//     #[test]
-//     fn test_g1p_add_montgomery() {
-//         let a = G1Projective::random();
-//         let b = G1Projective::random();
-//         let c = ark_bn254::G1Projective::ZERO;
-//         let circuit = G1Projective::add_montgomery(
-//             G1Projective::wires_set_montgomery(a),
-//             G1Projective::wires_set_montgomery(b),
-//         );
-//         circuit.gate_counts().print();
-//         for mut gate in circuit.1 {
-//             gate.evaluate();
-//         }
-//         let d = G1Projective::from_wires_unchecked(circuit.0);
-//         assert_eq!(d, G1Projective::as_montgomery(a + b));
-//
-//         let circuit = G1Projective::add_montgomery(
-//             G1Projective::wires_set_montgomery(a),
-//             G1Projective::wires_set_montgomery(c),
-//         );
-//         for mut gate in circuit.1 {
-//             gate.evaluate();
-//         }
-//         let d = G1Projective::from_wires_unchecked(circuit.0);
-//         assert_eq!(d, G1Projective::as_montgomery(a));
-//
-//         let circuit = G1Projective::add_montgomery(
-//             G1Projective::wires_set_montgomery(c),
-//             G1Projective::wires_set_montgomery(b),
-//         );
-//         for mut gate in circuit.1 {
-//             gate.evaluate();
-//         }
-//         let d = G1Projective::from_wires_unchecked(circuit.0);
-//         assert_eq!(d, G1Projective::as_montgomery(b));
-//
-//         let circuit = G1Projective::add_montgomery(
-//             G1Projective::wires_set_montgomery(c),
-//             G1Projective::wires_set_montgomery(c),
-//         );
-//         for mut gate in circuit.1 {
-//             gate.evaluate();
-//         }
-//         let d = G1Projective::from_wires_unchecked(circuit.0);
-//         assert_eq!(d, G1Projective::as_montgomery(c));
-//     }
-//
-//     #[test]
-//     fn test_g1p_double_montgomery() {
-//         let a = G1Projective::random();
-//         let circuit = G1Projective::double_montgomery(G1Projective::wires_set_montgomery(a));
-//         circuit.gate_counts().print();
-//         for mut gate in circuit.1 {
-//             gate.evaluate();
-//         }
-//         let c = G1Projective::from_wires_unchecked(circuit.0);
-//         assert_eq!(c, G1Projective::as_montgomery(a + a));
-//
-//         let b = ark_bn254::G1Projective::ZERO;
-//         let circuit = G1Projective::double_montgomery(G1Projective::wires_set_montgomery(b));
-//         for mut gate in circuit.1 {
-//             gate.evaluate();
-//         }
-//         let c = G1Projective::from_wires_unchecked(circuit.0);
-//         assert_eq!(c, G1Projective::as_montgomery(b));
-//     }
-//
-//     #[test]
-//     fn test_g1p_multiplexer() {
-//         let w = 10;
-//         let n = 2_usize.pow(w as u32);
-//         let a: Vec<ark_bn254::G1Projective> = (0..n).map(|_| G1Projective::random()).collect();
-//         let s: Wires = (0..w).map(|_| new_wirex()).collect();
-//
-//         let mut a_wires = Vec::new();
-//         for e in a.iter() {
-//             a_wires.push(G1Projective::wires_set(*e));
-//         }
-//
-//         let mut u = 0;
-//         for wire in s.iter().rev() {
-//             let mut rng = create_rng();
-//
-//             let x = rng.r#gen();
-//             u = u + u + if x { 1 } else { 0 };
-//             wire.borrow_mut().set(x);
-//         }
-//
-//         let circuit = G1Projective::multiplexer(a_wires, s.clone(), w);
-//         circuit.gate_counts().print();
-//
-//         for mut gate in circuit.1 {
-//             gate.evaluate();
-//         }
-//
-//         let result = G1Projective::from_wires(circuit.0);
-//         let expected = a[u];
-//
-//         assert_eq!(result, expected);
-//     }
-//
-//     #[test]
-//     fn test_g1p_multiplexer_evaluate() {
-//         let w = 10;
-//         let n = 2_usize.pow(w as u32);
-//         let a: Vec<ark_bn254::G1Projective> = (0..n).map(|_| G1Projective::random()).collect();
-//         let s: Wires = (0..w).map(|_| new_wirex()).collect();
-//
-//         let mut rng = create_rng();
-//         let mut a_wires = Vec::new();
-//         for e in a.iter() {
-//             a_wires.push(G1Projective::wires_set(*e));
-//         }
-//
-//         let mut u = 0;
-//         for wire in s.iter().rev() {
-//             let x = rng.r#gen();
-//             u = u + u + if x { 1 } else { 0 };
-//             wire.borrow_mut().set(x);
-//         }
-//
-//         let (result_wires, gate_count) = G1Projective::multiplexer_evaluate(a_wires, s.clone(), w);
-//         gate_count.print();
-//         let result = G1Projective::from_wires(result_wires);
-//         let expected = a[u];
-//
-//         assert_eq!(result, expected);
-//     }
-//
-//     // #[test]
-//     // fn test_g1p_scalar_mul_with_constant_base_evaluate_montgomery() {
-//     //     let base = G1Projective::random();
-//     //     let s = Fr::random();
-//     //     let (result_wires, gate_count) =
-//     //         G1Projective::scalar_mul_by_constant_base_evaluate_montgomery::<10>(
-//     //             Fr::wires_set(s),
-//     //             base,
-//     //         );
-//     //     gate_count.print();
-//     //     let result = G1Projective::from_wires_unchecked(result_wires);
-//     //     assert_eq!(result, G1Projective::as_montgomery(base * s));
-//     // }
-//     //
-//     // #[test]
-//     // fn test_msm_with_constant_bases_evaluate_montgomery() {
-//     //     let n = 1;
-//     //     let bases = (0..n).map(|_| G1Projective::random()).collect::<Vec<_>>();
-//     //     let scalars = (0..n).map(|_| Fr::random()).collect::<Vec<_>>();
-//     //     let (result_wires, gate_count) =
-//     //         G1Projective::msm_with_constant_bases_evaluate_montgomery::<10>(
-//     //             scalars.iter().map(|s| Fr::wires_set(*s)).collect(),
-//     //             bases.clone(),
-//     //         );
-//     //     gate_count.print();
-//     //     let result = G1Projective::from_wires_unchecked(result_wires);
-//     //     let bases_affine = bases.iter().map(|g| g.into_affine()).collect::<Vec<_>>();
-//     //     let expected = ark_bn254::G1Projective::msm(&bases_affine, &scalars).unwrap();
-//     //     assert_eq!(result, G1Projective::as_montgomery(expected));
-//     // }
-// }

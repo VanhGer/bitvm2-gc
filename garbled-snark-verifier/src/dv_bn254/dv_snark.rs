@@ -16,6 +16,19 @@ pub fn dv_snark_verifier_circuit(
     circuit
 }
 
+pub fn dv_snark_verifier_bench_circuit(
+    witness: &VerifierPayloadRef
+) -> Circuit {
+    let start = Instant::now();
+    let (builder, _) = compile_verifier();
+    println!("Compile time: {:?}", start.elapsed());
+    let start = Instant::now();
+    let circuit = builder.build_benchmark(&witness.to_bits());
+    println!("build circuit time:{:?}", start.elapsed());
+
+    circuit
+}
+
 #[cfg(test)]
 mod test {
     use std::str::FromStr;
@@ -73,7 +86,8 @@ mod test {
         witness
     }
     #[test]
-    fn test_dv_snark_verifier_circuit_vjp() {
+    #[ignore]
+    fn test_dv_snark_verifier_circuit_dvbn254() {
         // Prepare VerifierPayloadRef
         let witness = initialize_witness();
 

@@ -145,7 +145,7 @@ pub fn frref_to_bits(n: &FrRef) -> [bool; FR_LEN] {
 
 #[test]
 #[ignore]
-fn test_load_witness_from_files_vjp() {
+fn test_load_witness_from_files_dvbn254() {
     let witness = VerifierPayloadRef::load_witness_from_files(
         "./data/dv-proof",
         "./data/public_inputs.bin",

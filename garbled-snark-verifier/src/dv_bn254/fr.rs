@@ -165,18 +165,3 @@ impl Fr {
     }
 
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//
-//     #[test]
-//     fn test_fr_random() {
-//         let u = Fr::random();
-//         println!("u: {:?}", u);
-//         let b = Fr::to_bits(u);
-//         let v = Fr::from_bits(b);
-//         println!("v: {:?}", v);
-//         assert_eq!(u, v);
-//     }
-// }

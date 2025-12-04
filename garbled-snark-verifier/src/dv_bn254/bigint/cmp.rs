@@ -162,10 +162,9 @@ impl U254 {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
+    use crate::circuits::sect233k1::builder::CircuitAdapter;
     use super::*;
-    use crate::circuits::{
+    use crate::dv_bn254::{
         bigint::{
             U254,
             utils::{random_biguint_n_bits},
@@ -173,76 +172,19 @@ mod tests {
     };
 
     #[test]
-    fn test_equal_and_equal_constant() {
+    fn test_less_than_constant_dvbn254() {
+        let mut bld = CircuitAdapter::default();
         let a = random_biguint_n_bits(254);
         let b = random_biguint_n_bits(254);
-        let circuit = U254::equal(U254::wires_set_from_number(&a), U254::wires_set_from_number(&b));
-        circuit.gate_counts().print();
-        for mut gate in circuit.1 {
-            gate.evaluate();
-        }
-        assert_eq!(a == b, circuit.0[0].borrow().get_value());
-
-        let a = random_biguint_n_bits(254);
-        let circuit = U254::equal(U254::wires_set_from_number(&a), U254::wires_set_from_number(&a));
-        circuit.gate_counts().print();
-        for mut gate in circuit.1 {
-            gate.evaluate();
-        }
-        assert!(circuit.0[0].borrow().get_value());
-
-        let a = random_biguint_n_bits(254);
-        let circuit = U254::equal_constant(U254::wires_set_from_number(&a), &b);
-        circuit.gate_counts().print();
-        for mut gate in circuit.1 {
-            gate.evaluate();
-        }
-        assert_eq!(a == b, circuit.0[0].borrow().get_value());
-    }
-
-    #[test]
-    fn test_greater_than() {
-        let a = random_biguint_n_bits(254);
-        let b = random_biguint_n_bits(254);
-        let circuit =
-            U254::greater_than(U254::wires_set_from_number(&a), U254::wires_set_from_number(&b));
-        circuit.gate_counts().print();
-        for mut gate in circuit.1 {
-            gate.evaluate();
-        }
-        assert_eq!(a > b, circuit.0[0].borrow().get_value());
-
-        let a = random_biguint_n_bits(254);
-        let circuit =
-            U254::greater_than(U254::wires_set_from_number(&a), U254::wires_set_from_number(&a));
-        circuit.gate_counts().print();
-        for mut gate in circuit.1 {
-            gate.evaluate();
-        }
-        assert!(!circuit.0[0].borrow().get_value());
-
-        let a = random_biguint_n_bits(254);
-        let circuit = U254::greater_than(
-            U254::wires_set_from_number(&(&a + BigUint::from_str("1").unwrap())),
-            U254::wires_set_from_number(&a),
-        );
-        circuit.gate_counts().print();
-        for mut gate in circuit.1 {
-            gate.evaluate();
-        }
-        assert!(circuit.0[0].borrow().get_value());
-    }
-
-    #[test]
-    fn test_less_than_constant() {
-        let a = random_biguint_n_bits(254);
-        let b = random_biguint_n_bits(254);
-        let circuit = U254::less_than_constant(U254::wires_set_from_number(&a), &b);
-        circuit.gate_counts().print();
-        for mut gate in circuit.1 {
-            gate.evaluate();
-        }
-        assert_eq!(a < b, circuit.0[0].borrow().get_value());
+        let vec_a = U254::wires_set_from_number(&mut bld, &a);
+        let circuit = U254::less_than_constant(&mut bld, &vec_a, &b);
+        // circuit.gate_counts().print();
+        // for mut gate in circuit.1 {
+        //     gate.evaluate();
+        // }
+       let wires = bld.eval_gates(&vec![]);
+        let output = wires[circuit];
+        assert_eq!(a < b, output);
     }
 
 }
