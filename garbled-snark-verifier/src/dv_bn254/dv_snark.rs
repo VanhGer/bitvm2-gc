@@ -95,7 +95,7 @@ mod test {
         let wires_bits = bld.eval_gates(&witness.to_bits());
 
         let output_value = wires_bits[info.output_index];
-        println!("output_value: {}", output_value);
+        assert!(output_value);
 
         let stats = bld.gate_counts();
         println!("Gate counts: {:?}", stats);
