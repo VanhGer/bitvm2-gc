@@ -1,7 +1,7 @@
 use crate::dv_bn254::bigint::U254;
 use crate::circuits::bn254::utils::create_rng;
 use crate::{dv_bn254::fp254impl::Fp254Impl};
-use ark_ff::{AdditiveGroup, UniformRand};
+use ark_ff::{AdditiveGroup, Field, UniformRand};
 use core::str::FromStr;
 use num_bigint::BigUint;
 use crate::circuits::sect233k1::builder::CircuitTrait;
@@ -146,6 +146,173 @@ impl Fq {
         let not_a = not(bld, u);
         let s = bld.and_wire(not_a, v);
         U254::select(bld, &wires_1, &wires_2, s)
+    }
+
+    pub fn inverse<T: CircuitTrait>(bld: &mut T, a: &[usize]) -> Vec<usize> {
+        assert_eq!(a.len(), Self::N_BITS);
+        let wires_1 = U254::odd_part(bld, a);
+        let odd_part = wires_1.0;
+        let mut even_part = wires_1.1;
+
+        // initialize value for wires
+        let neg_odd_part = Self::neg(bld, &odd_part);
+        let mut u = U254::half(bld, &neg_odd_part);
+        let mut v = odd_part;
+        let mut k = Fq::wires_set(bld, ark_bn254::Fq::ONE).0.to_vec();
+        let mut r = Fq::wires_set(bld, ark_bn254::Fq::ONE).0.to_vec();
+        let mut s = Fq::wires_set(bld, ark_bn254::Fq::from(2)).0.to_vec();
+
+        for _ in 0..2 * Self::N_BITS {
+            let not_x1 = u[0];
+            let not_x2 = v[0];
+            let x3 = U254::greater_than(bld, &u, &v);
+
+            // Nimp
+            let not_b = not(bld, not_x2);
+            let p2 = bld.and_wire(not_x1, not_b);
+            let wires_2 = bld.and_wire(not_x1, not_x2);
+            let p3 = bld.and_wire(wires_2, x3);
+            let not_x3 = not(bld, x3);
+            let p4 = bld.and_wire(wires_2, not_x3);
+
+            //part1
+            let u1 = U254::half(bld, &u);
+            let v1 = v.clone();
+            let r1 = r.clone();
+            let s1 = U254::double_without_overflow(bld, &s);
+            let k1 = U254::add_constant_without_carry(
+                bld,
+                &k,
+                &BigUint::from_str("1").unwrap(),
+            );
+
+            // part2
+            let u2 = u.clone();
+            let v2 = U254::half(bld, &v);
+            let r2 = U254::double_without_overflow(bld, &r);
+            let s2 = s.clone();
+            let k2 = U254::add_constant_without_carry(
+                bld,
+                &k,
+                &BigUint::from_str("1").unwrap(),
+            );
+
+            // part3
+            let u3 = U254::sub_without_borrow(bld, &u1, &v2);
+            let v3 = v.clone();
+            let r3 = U254::add_without_carry(bld, &r, &s);
+            let s3 = U254::double_without_overflow(bld, &s);
+            let k3 = U254::add_constant_without_carry(
+                bld,
+                &k,
+                &BigUint::from_str("1").unwrap(),
+            );
+
+            // part4
+            let u4 = u.clone();
+            let v4 = U254::sub_without_borrow(bld, &v2, &u1);
+            let r4 = U254::double_without_overflow(bld, &r);
+            let s4 = U254::add_without_carry(bld, &r, &s);
+            let k4 = U254::add_constant_without_carry(
+                bld,
+                &k,
+                &BigUint::from_str("1").unwrap(),
+            );
+
+            // calculate new u
+            let wire_u_1 = U254::self_or_zero_inv(bld, &u1, not_x1);
+            let wire_u_2 = U254::self_or_zero(bld, &u2, p2);
+            let wire_u_3 = U254::self_or_zero(bld, &u3, p3);
+            let wire_u_4 = U254::self_or_zero(bld, &u4, p4);
+
+            let add_u_1 = U254::add_without_carry(bld, &wire_u_1, &wire_u_2);
+            let add_u_2 = U254::add_without_carry(bld, &add_u_1, &wire_u_3);
+            let new_u = U254::add_without_carry(bld, &add_u_2, &wire_u_4);
+
+            // calculate new v
+            let wire_v_1 = U254::self_or_zero_inv(bld, &v1, not_x1);
+            let wire_v_2 = U254::self_or_zero(bld, &v2, p2);
+            let wire_v_3 = U254::self_or_zero(bld, &v3, p3);
+            let wire_v_4 = U254::self_or_zero(bld, &v4, p4);
+
+            let add_v_1 = U254::add_without_carry(bld, &wire_v_1, &wire_v_2);
+            let add_v_2 = U254::add_without_carry(bld, &add_v_1, &wire_v_3);
+            let new_v = U254::add_without_carry(bld, &add_v_2, &wire_v_4);
+
+            // calculate new r
+            let wire_r_1 = U254::self_or_zero_inv(bld, &r1, not_x1);
+            let wire_r_2 = U254::self_or_zero(bld, &r2, p2);
+            let wire_r_3 = U254::self_or_zero(bld, &r3, p3);
+            let wire_r_4 = U254::self_or_zero(bld, &r4, p4);
+
+            let add_r_1 = U254::add_without_carry(bld, &wire_r_1, &wire_r_2);
+            let add_r_2 = U254::add_without_carry(bld, &add_r_1, &wire_r_3);
+            let new_r = U254::add_without_carry(bld, &add_r_2, &wire_r_4);
+
+            // calculate new s
+            let wire_s_1 = U254::self_or_zero_inv(bld, &s1, not_x1);
+            let wire_s_2 = U254::self_or_zero(bld, &s2, p2);
+            let wire_s_3 = U254::self_or_zero(bld, &s3, p3);
+            let wire_s_4 = U254::self_or_zero(bld, &s4, p4);
+
+            let add_s_1 = U254::add_without_carry(bld, &wire_s_1, &wire_s_2);
+            let add_s_2 = U254::add_without_carry(bld, &add_s_1, &wire_s_3);
+            let new_s = U254::add_without_carry(bld, &add_s_2, &wire_s_4);
+
+            // calculate new k
+            let wire_k_1 = U254::self_or_zero_inv(bld, &k1, not_x1);
+            let wire_k_2 = U254::self_or_zero(bld, &k2, p2);
+            let wire_k_3 = U254::self_or_zero(bld, &k3, p3);
+            let wire_k_4 = U254::self_or_zero(bld, &k4, p4);
+
+            let add_k_1 = U254::add_without_carry(bld, &wire_k_1,& wire_k_2);
+            let add_k_2 = U254::add_without_carry(bld, &add_k_1, &wire_k_3);
+            let new_k = U254::add_without_carry(bld, &add_k_2, &wire_k_4);
+
+            // set new values
+
+            let v_equals_one = U254::equal_constant(
+                bld,
+                &v,
+                &BigUint::from_str("1").unwrap()
+            );
+            u = U254::select(bld, &u, &new_u, v_equals_one);
+            v = U254::select(bld, &v, &new_v, v_equals_one);
+            r = U254::select(bld, &r, &new_r, v_equals_one);
+            s = U254::select(bld, &s, &new_s, v_equals_one);
+            k = U254::select(bld, &k, &new_k, v_equals_one);
+        }
+
+        // divide result by even part
+        for _ in 0..Self::N_BITS {
+            let updated_s = Self::half(bld, &s);
+            let updated_even_part = Self::half(bld, &even_part);
+            let selector = Self::equal_constant(bld, &even_part, ark_bn254::Fq::ONE);
+            s = U254::select(bld, &s, &updated_s, selector);
+            even_part = U254::select(bld, &even_part, &updated_even_part, selector);
+        }
+
+        // divide result by 2^k
+        for _ in 0..2 * Self::N_BITS {
+            let updated_s = Self::half(bld, &s);
+            let updated_k = Fq::add_constant(bld, &k, ark_bn254::Fq::from(-1));
+            let selector = Self::equal_constant(bld, &k, ark_bn254::Fq::ZERO);
+            s = U254::select(bld, &s, &updated_s, selector);
+            k = U254::select(bld, &k, &updated_k, selector);
+        }
+        s
+    }
+
+    pub fn inverse_montgomery<T: CircuitTrait>(bld: &mut T, a: &[usize]) -> Vec<usize> {
+        let b = Self::inverse(bld, a);
+        let result = Self::mul_by_fq_constant_montgomery(
+            bld,
+            &b,
+            ark_bn254::Fq::from(Fq::montgomery_r_as_biguint()).square()
+                * ark_bn254::Fq::from(Fq::montgomery_r_as_biguint()),
+        );
+
+        result
     }
 }
 

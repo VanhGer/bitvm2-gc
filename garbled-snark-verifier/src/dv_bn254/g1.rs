@@ -128,6 +128,15 @@ impl G1Projective {
         res
     }
 
+    pub fn from_vec_wires(vec_wires: &[usize]) -> Self {
+        assert_eq!(vec_wires.len(), G1_PROJECTIVE_LEN);
+        Self {
+            x: Fq(vec_wires[0..Fq::N_BITS].to_vec().try_into().unwrap()),
+            y: Fq(vec_wires[Fq::N_BITS..2 * Fq::N_BITS].to_vec().try_into().unwrap()),
+            z: Fq(vec_wires[2 * Fq::N_BITS..3 * Fq::N_BITS].to_vec().try_into().unwrap()),
+        }
+    }
+
     pub fn equal<T: CircuitTrait>(bld: &mut T, p_a: &[usize], p_b: &[usize]) -> usize {
         assert_eq!(p_a.len(), G1_PROJECTIVE_LEN);
         assert_eq!(p_b.len(), G1_PROJECTIVE_LEN);

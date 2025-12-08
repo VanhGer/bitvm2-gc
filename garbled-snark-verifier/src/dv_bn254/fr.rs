@@ -164,4 +164,11 @@ impl Fr {
         U254::select(bld, &wires_1, &wires_2, s)
     }
 
+    // mont_mont_r: montgomery form of Fr::montgomery_r_as_biguint()
+    pub fn to_montgomery_circuit<T: CircuitTrait>(bld: &mut T, a: &[usize]) -> Vec<usize> {
+        let mont_mont_r = Fr::as_montgomery(ark_bn254::Fr::from(Fr::montgomery_r_as_biguint()));
+        let mont_mont_r_wires = Fr::wires_set(bld, mont_mont_r);
+        let mont_a = Fr::mul_montgomery(bld, a, &mont_mont_r_wires.0);
+        mont_a
+    }
 }
