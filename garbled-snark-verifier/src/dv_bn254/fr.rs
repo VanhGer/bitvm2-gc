@@ -171,4 +171,41 @@ impl Fr {
         let mont_a = Fr::mul_montgomery(bld, a, &mont_mont_r_wires.0);
         mont_a
     }
+
+    // little-endian bit vector of the 2^170
+    pub fn two_to_170<T: CircuitTrait>(b: &mut T) -> Vec<usize> {
+        let mut out = vec![b.zero(); FR_LEN];
+        out[170] = b.one();
+        out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::circuits::sect233k1::builder::{CircuitAdapter, CircuitTrait};
+    use crate::dv_bn254::fp254impl::Fp254Impl;
+    use crate::dv_bn254::fr::Fr;
+
+    #[test]
+    fn test_negate_fr_with_selector() {
+        let a = Fr::random();
+        let neg_a = -a;
+        let negate = false;
+
+        let mut bld = CircuitAdapter::default();
+        let a_wires = Fr::wires(&mut bld);
+        let negate_wire = bld.fresh_one();
+
+        let neg_a_sel = Fr::negate_with_selector(&mut bld, &a_wires.0, negate_wire);
+
+        let witness = Fr::to_bits(a).iter().chain(&[negate]).copied().collect::<Vec<_>>();
+        let wires_bits = bld.eval_gates(&witness);
+        let neg_a_val = Fr::from_bits(
+            neg_a_sel
+                .iter()
+                .map(|w| wires_bits[*w])
+                .collect(),
+        );
+        assert_eq!(a, neg_a_val);
+    }
 }

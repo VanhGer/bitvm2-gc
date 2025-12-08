@@ -196,4 +196,20 @@ pub trait Fp254Impl: Sized {
 
         Self::mul_montgomery(bld, a, a)
     }
+
+    // ──────────────────────────  2-way mux  (sel ? a : b)  ────────────────────
+    #[inline]
+    fn mux<T: CircuitTrait>(b: &mut T, sel: usize, a: usize, d: usize) -> usize {
+        let m0 = b.xor_wire(a, d);
+        let m1 = b.and_wire(sel, m0);
+        b.xor_wire(d, m1)
+    }
+    fn mux_vec<T: CircuitTrait>(b: &mut T, sel: usize, a: &[usize], d: &[usize]) -> Vec<usize> {
+        a.iter().zip(d).map(|(&x, &y)| Self::mux(b, sel, x, y)).collect()
+    }
+
+    fn negate_with_selector<T: CircuitTrait>(bld: &mut T, a: &[usize], neg: usize) -> Vec<usize> {
+        let neg_a = Self::neg(bld, a);
+        Self::mux_vec(bld, neg, &neg_a, a)
+    }
 }

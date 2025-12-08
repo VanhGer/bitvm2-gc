@@ -8,7 +8,7 @@ use ark_ff::{AdditiveGroup, UniformRand};
 use ark_ec::PrimeGroup;
 use ark_ec::short_weierstrass::SWCurveConfig;
 use crate::circuits::sect233k1::builder::CircuitTrait;
-use crate::dv_bn254::basic::selector;
+use crate::dv_bn254::basic::{not, selector};
 use crate::dv_bn254::fq::FQ_LEN;
 
 #[derive(Debug, Clone)]
@@ -272,6 +272,20 @@ impl G1Projective {
         res.extend(z);
     
         res
+    }
+
+    pub fn negate_with_neg_selector<T: CircuitTrait>(bld: &mut T, p: &[usize], neg: usize) -> Vec<usize> {
+        assert_eq!(p.len(), G1_PROJECTIVE_LEN);
+        let new_y = Fq::negate_with_selector(bld, &p[FQ_LEN..FQ_LEN * 2], neg);
+        let mut res = p.to_vec();
+        res[FQ_LEN..FQ_LEN * 2].copy_from_slice(&new_y[..]);
+        res
+    }
+
+    pub fn negate_with_pos_selector<T: CircuitTrait>(bld: &mut T, p: &[usize], neg: usize) -> Vec<usize> {
+        assert_eq!(p.len(), G1_PROJECTIVE_LEN);
+        let pos = not(bld, neg);
+        Self::negate_with_neg_selector(bld, p, pos)
     }
 
     pub fn selector_projective_montgomery<T: CircuitTrait>(
@@ -619,5 +633,31 @@ mod tests {
 
         let stats = bld.gate_counts();
         println!("{stats}");
+    }
+
+    #[test]
+    fn test_g1_negate_with_selector() {
+        let point = G1Projective::random();
+        let neg_point = -point;
+
+        let mut bld = CircuitAdapter::default();
+        let point_wires = G1Projective::wires(&mut bld);
+        let neg_wire = bld.fresh_one();
+        let neg_selector = false; // set to 1 to negate
+        let out_wires = G1Projective::negate_with_pos_selector(
+            &mut bld,
+            &point_wires.to_vec_wires(),
+            neg_wire,
+        );
+
+        let witness = G1Projective::to_bits(G1Projective::as_montgomery(point))
+            .into_iter()
+            .chain(vec![neg_selector]) // neg_selector = 1
+            .collect::<Vec<bool>>();
+
+        let wires_bits = bld.eval_gates(&witness);
+        let out_bits: Vec<bool> = out_wires.iter().map(|id| wires_bits[*id]).collect();
+        let result = G1Projective::from_bits_unchecked(out_bits);
+        assert_eq!(result, G1Projective::as_montgomery(neg_point));
     }
 }

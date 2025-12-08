@@ -8,7 +8,7 @@ pub(crate) mod hinted_double_scalar_mul {
     use crate::dv_bn254::g1::{G1Projective, G1_PROJECTIVE_LEN};
     use crate::dv_bn254::fr::Fr;
 
-    const HINTED_DOUBLE_SCALAR_BITS_LENGTH: usize = 5;  // 2/3 * 254 = 170
+    const HINTED_DOUBLE_SCALAR_BITS_LENGTH: usize = 170;  // 2/3 * 254 = 170
     const NUMBER_OF_POINTS: usize = 3;
     /// lookup precompute table
     // indices in little-endian form
@@ -188,26 +188,28 @@ pub(crate) mod hinted_double_scalar_mul {
     fn test_hinted_double_scalar_mul() {
         // test with one point first
 
-        let scalar1 = ark_bn254::Fr::from_str("1").unwrap();
-        let scalar2 = ark_bn254::Fr::from_str("1").unwrap();
-        let scalar3 = ark_bn254::Fr::from_str("1").unwrap();
+        let scalar1 = ark_bn254::Fr::from_str("117254209170240570118468483301402360720011190156626").unwrap();
+        let scalar2 = ark_bn254::Fr::from_str("428956628384832546334058967498472364665310775024525").unwrap();
+        let scalar3 = ark_bn254::Fr::from_str("382966261084432891439040614202494776072682302885809").unwrap();
 
         let point1 = ark_bn254::G1Projective::generator();
         let point2 = ark_bn254::G1Projective::new_unchecked(
-            ark_bn254::Fq::from_str("10537734462087416081703093831598556064708483284255095313741526306229817075794").unwrap(),
-            ark_bn254::Fq::from_str("20966915327948412143521801558416747519195976034813410166958802937060892709682").unwrap(),
-            ark_bn254::Fq::from_str("4747267416898579569750028682922202068361043094228046616996619066330493832914").unwrap(),
-        );
-        let point3 = ark_bn254::G1Projective::new_unchecked(
             ark_bn254::Fq::from_str("19121359422423394397339808609605166974352270143618965761898427716156520530534").unwrap(),
             ark_bn254::Fq::from_str("7342439030613981009500063463741603071320313438049548764331415952562426998984").unwrap(),
             ark_bn254::Fq::from_str("12271842149693452803354268597979540201662719082150614901399685997805877048202").unwrap(),
+        );
+        let point3 = ark_bn254::G1Projective::new_unchecked(
+            ark_bn254::Fq::from_str("10537734462087416081703093831598556064708483284255095313741526306229817075794").unwrap(),
+            ark_bn254::Fq::from_str("20966915327948412143521801558416747519195976034813410166958802937060892709682").unwrap(),
+            ark_bn254::Fq::from_str("4747267416898579569750028682922202068361043094228046616996619066330493832914").unwrap(),
         );
         let point1_mont = G1Projective::as_montgomery(point1);
         let point2_mont = G1Projective::as_montgomery(point2);
         let point3_mont = G1Projective::as_montgomery(point3);
 
         let res = point1 * scalar1 + point2 * scalar2 + point3 * scalar3;
+        println!("res: {:?}", res);
+
         let mont_res = G1Projective::as_montgomery(res);
 
         let mut bld = CircuitAdapter::default();
