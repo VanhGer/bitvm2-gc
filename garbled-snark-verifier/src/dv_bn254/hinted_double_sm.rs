@@ -53,9 +53,6 @@ pub(crate) mod hinted_double_scalar_mul {
         }
 
         assert!(table.len().is_power_of_two(), "table length must be a power-of-two");
-        for i in 0..table.len() {
-            assert_eq!(table[i].len(), G1_PROJECTIVE_LEN)
-        }
         let mut level= table.clone();
 
         let mut bit = 0;
@@ -69,7 +66,8 @@ pub(crate) mod hinted_double_scalar_mul {
             for j in 0..(level.len() / 2) {
                 let a = &level[2 * j];
                 let b = &level[2 * j + 1];
-                next.push(mux(bld, a, b, &sel_mask.to_vec_wires()));
+                let mux_wires = mux(bld, a, b, &sel_mask.to_vec_wires());
+                next.push(mux_wires);
             }
             level = next;
             bit += 1;
@@ -93,14 +91,12 @@ pub(crate) mod hinted_double_scalar_mul {
 
         let g1_zero_mont = G1Projective::as_montgomery(ark_bn254::G1Projective::ZERO);
         let g1_zero_mont_wires = G1Projective::wires_set(bld, g1_zero_mont).to_vec_wires();
-
         // precompute table for 3 points
         let table = emit_precompute_hinted_table(bld, points, &g1_zero_mont_wires);
-
         let mut r = g1_zero_mont_wires;
 
         for i in (0..HINTED_DOUBLE_SCALAR_BITS_LENGTH).rev() {
-            r = G1Projective::add_montgomery(bld, &r, &r); // r = r * 2
+            r = G1Projective::double_montgomery(bld, &r); // r = r * 2
             // get the msb i-th bit of k1, k2, k3
             // let lidx = vec![scalars[0][i], scalars[1][i], scalars[2][i]];
             let lidx = vec![scalars[0][i]];
@@ -193,14 +189,12 @@ pub(crate) mod hinted_double_scalar_mul {
         let point1_mont = G1Projective::as_montgomery(ark_bn254::G1Projective::generator());
 
         let res = ark_bn254::G1Projective::generator() * scalar1;
-        println!("res: {:?}", res);
         let mont_res = G1Projective::as_montgomery(res);
-        println!("mont_res: {:?}", mont_res);
-
 
         let mut bld = CircuitAdapter::default();
         let scalar_wires = Fr::wires(&mut bld).0.to_vec();
         let point1_mont_wires = G1Projective::wires(&mut bld).to_vec_wires();
+
 
         let out_wires = emit_hinted_double_scalar_mul(
             &mut bld,
@@ -216,7 +210,6 @@ pub(crate) mod hinted_double_scalar_mul {
         let out_bits = out_wires.iter().map(|&w| wires_bits[w]).collect::<Vec<bool>>();
         let out_point = G1Projective::from_bits_unchecked(out_bits);
 
-        println!("out_point: {:?}", out_point);
-
+        assert_eq!(out_point, mont_res);
     }
 }
