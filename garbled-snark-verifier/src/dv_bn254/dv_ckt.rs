@@ -304,6 +304,7 @@ pub(crate) fn verify<T: CircuitTrait>(
 #[cfg(test)]
 mod test {
     use std::str::FromStr;
+    use ark_ff::AdditiveGroup;
     use crate::circuits::sect233k1::builder::{CircuitAdapter, CircuitTrait};
     use crate::dv_bn254::bigint::U254;
     use crate::dv_bn254::dv_ckt::{get_fs_challenge, get_input_indexes};
@@ -359,6 +360,58 @@ mod test {
             trapdoor: TrapdoorRef { tau, delta, epsilon },
         };
         witness
+    }
+
+    #[test]
+    fn test_decompose_dvbn254() {
+        let mut bld = CircuitAdapter::default();
+
+        let u0 = ark_bn254::Fr::from_str("21457562058599027886128781723011550118341889803802259009197664792048723713284").unwrap();
+        let v0 = ark_bn254::Fr::from_str("18773909891129115237742565942774855385236068205643017366808288723990672538934").unwrap();
+        let x1 = ark_bn254::Fr::from_str("117254209170240570118468483301402360720011190156626").unwrap();
+        let x2 = ark_bn254::Fr::from_str("428956628384832546334058967498472364665310775024525").unwrap();
+        let z = ark_bn254::Fr::from_str("382966261084432891439040614202494776072682302885809").unwrap();
+
+        let neg_x1 = false;
+        let neg_x2 = false;
+        let neg_z = true;
+
+        let u0_wires = Fr::wires(&mut bld);
+        let v0_wires = Fr::wires(&mut bld);
+        let x1_wires = Fr::wires(&mut bld);
+        let x2_wires = Fr::wires(&mut bld);
+        let z_wires = Fr::wires(&mut bld);
+        let neg_x1_wire = bld.fresh_one();
+        let neg_x2_wire = bld.fresh_one();
+        let neg_z_wire = bld.fresh_one();
+
+        let neg_ws_x1 = Fr::negate_with_selector(&mut bld, &x1_wires.0, neg_x1_wire);
+        let neg_ws_x2 = Fr::negate_with_selector(&mut bld, &x2_wires.0, neg_x2_wire);
+        let neg_ws_z = Fr::negate_with_selector(&mut bld, &z_wires.0, neg_z_wire);
+
+        let u0_z = Fr::mul_montgomery(&mut bld, &u0_wires.0, &neg_ws_z);
+        let u0_z_sub_x1 = Fr::sub(&mut bld, &u0_z, &neg_ws_x1);
+
+        let v0_z = Fr::mul_montgomery(&mut bld, &v0_wires.0, &neg_ws_z);
+        let v0_z_sub_x2 = Fr::sub(&mut bld, &v0_z, &neg_ws_x2);
+
+        let witness = Fr::to_bits(Fr::as_montgomery(u0)).iter()
+            .chain(Fr::to_bits(Fr::as_montgomery(v0)).iter())
+            .chain(Fr::to_bits(Fr::as_montgomery(x1)).iter())
+            .chain(Fr::to_bits(Fr::as_montgomery(x2)).iter())
+            .chain(Fr::to_bits(Fr::as_montgomery(z)).iter())
+            .chain(&[neg_x1, neg_x2, neg_z])
+            .copied()
+            .collect::<Vec<_>>();
+
+        let wires_bits = bld.eval_gates(&witness);
+        let u0_z_sub_x1_bits = u0_z_sub_x1.iter().map(|w| wires_bits[*w]).collect::<Vec<bool>>();
+        let v0_z_sub_x2_bits = v0_z_sub_x2.iter().map(|w| wires_bits[*w]).collect::<Vec<bool>>();
+        let u0_z_sub_x1_val = Fr::from_bits(u0_z_sub_x1_bits);
+        let v0_z_sub_x2_val = Fr::from_bits(v0_z_sub_x2_bits);
+
+        assert_eq!(u0_z_sub_x1_val, Fr::as_montgomery(ark_bn254::Fr::ZERO));
+        assert_eq!(v0_z_sub_x2_val, Fr::as_montgomery(ark_bn254::Fr::ZERO));
     }
 
     #[test]
