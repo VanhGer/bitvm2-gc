@@ -8,8 +8,8 @@ pub(crate) mod hinted_double_scalar_mul {
     use crate::dv_bn254::g1::{G1Projective, G1_PROJECTIVE_LEN};
     use crate::dv_bn254::fr::Fr;
 
-    const HINTED_DOUBLE_SCALAR_BITS_LENGTH: usize = 170;  // 2/3 * 254
-    const NUMBER_OF_POINTS: usize = 1;
+    const HINTED_DOUBLE_SCALAR_BITS_LENGTH: usize = 5;  // 2/3 * 254 = 170
+    const NUMBER_OF_POINTS: usize = 3;
     /// lookup precompute table
     // indices in little-endian form
     // table: [0..2^w-1]P
@@ -98,8 +98,7 @@ pub(crate) mod hinted_double_scalar_mul {
         for i in (0..HINTED_DOUBLE_SCALAR_BITS_LENGTH).rev() {
             r = G1Projective::double_montgomery(bld, &r); // r = r * 2
             // get the msb i-th bit of k1, k2, k3
-            // let lidx = vec![scalars[0][i], scalars[1][i], scalars[2][i]];
-            let lidx = vec![scalars[0][i]];
+            let lidx = vec![scalars[0][i], scalars[1][i], scalars[2][i]];
             let t_i = emit_lookup(bld, &table, &lidx);
             r = G1Projective::add_montgomery(bld, &r, &t_i);
         }
@@ -120,43 +119,47 @@ pub(crate) mod hinted_double_scalar_mul {
         }
 
         let bs = [
-            // [0, 0, 0],
-            // [1, 0, 0],
-            // [0, 1, 0],
-            // [1, 1, 0],
-            // [0, 0, 1],
-            // [1, 0, 1],
-            // [0, 1, 1],
-            // [1, 1, 1],
-            [0],
-            [1],
+            [0, 0, 0],
+            [1, 0, 0],
+            [0, 1, 0],
+            [1, 1, 0],
+            [0, 0, 1],
+            [1, 0, 1],
+            [0, 1, 1],
+            [1, 1, 1],
+            // [0, 0],
+            // [1, 0],
+            // [0, 1],
+            // [1, 1],
+            // [0],
+            // [1],
         ];
 
         let table_size = bs.len();
         let mut table = Vec::with_capacity(table_size);
 
-        let tmp = g1_zero_mont_wires.clone().to_vec();
+        let tmp = g1_zero_mont_wires.to_vec();
         table.push(tmp);
 
         for i in 1..table_size {
-            // let temp_point = add_2_points_with_selects(
-            //     bld,
-            //     bs[i][0],
-            //     &points[0],
-            //     bs[i][1],
-            //     &points[1],
-            //     g1_zero_mont_wires,
-            // );
-            // let sel_temp = usize::from((bs[i][0] != 0) || (bs[i][1] != 0));
-            // let res_point = add_2_points_with_selects(
-            //     bld,
-            //     sel_temp,
-            //     &temp_point,
-            //     bs[i][2],
-            //     &points[2],
-            //     g1_zero_mont_wires,
-            // );
-            table.push(points[0].clone());
+            let temp_point = add_2_points_with_selects(
+                bld,
+                bs[i][0],
+                &points[0],
+                bs[i][1],
+                &points[1],
+                g1_zero_mont_wires,
+            );
+            let sel_temp = usize::from((bs[i][0] != 0) || (bs[i][1] != 0));
+            let res_point = add_2_points_with_selects(
+                bld,
+                sel_temp,
+                &temp_point,
+                bs[i][2],
+                &points[2],
+                g1_zero_mont_wires,
+            );
+            table.push(res_point);
         }
         table
     }
@@ -185,25 +188,49 @@ pub(crate) mod hinted_double_scalar_mul {
     fn test_hinted_double_scalar_mul() {
         // test with one point first
 
-        let scalar1 = ark_bn254::Fr::from_str("117254209170240570118468483301402360720011190156626").unwrap();
-        let point1_mont = G1Projective::as_montgomery(ark_bn254::G1Projective::generator());
+        let scalar1 = ark_bn254::Fr::from_str("1").unwrap();
+        let scalar2 = ark_bn254::Fr::from_str("1").unwrap();
+        let scalar3 = ark_bn254::Fr::from_str("1").unwrap();
 
-        let res = ark_bn254::G1Projective::generator() * scalar1;
+        let point1 = ark_bn254::G1Projective::generator();
+        let point2 = ark_bn254::G1Projective::new_unchecked(
+            ark_bn254::Fq::from_str("10537734462087416081703093831598556064708483284255095313741526306229817075794").unwrap(),
+            ark_bn254::Fq::from_str("20966915327948412143521801558416747519195976034813410166958802937060892709682").unwrap(),
+            ark_bn254::Fq::from_str("4747267416898579569750028682922202068361043094228046616996619066330493832914").unwrap(),
+        );
+        let point3 = ark_bn254::G1Projective::new_unchecked(
+            ark_bn254::Fq::from_str("19121359422423394397339808609605166974352270143618965761898427716156520530534").unwrap(),
+            ark_bn254::Fq::from_str("7342439030613981009500063463741603071320313438049548764331415952562426998984").unwrap(),
+            ark_bn254::Fq::from_str("12271842149693452803354268597979540201662719082150614901399685997805877048202").unwrap(),
+        );
+        let point1_mont = G1Projective::as_montgomery(point1);
+        let point2_mont = G1Projective::as_montgomery(point2);
+        let point3_mont = G1Projective::as_montgomery(point3);
+
+        let res = point1 * scalar1 + point2 * scalar2 + point3 * scalar3;
         let mont_res = G1Projective::as_montgomery(res);
 
         let mut bld = CircuitAdapter::default();
-        let scalar_wires = Fr::wires(&mut bld).0.to_vec();
+        let scalar1_wires = Fr::wires(&mut bld).0.to_vec();
+        let scalar2_wires = Fr::wires(&mut bld).0.to_vec();
+        let scalar3_wires = Fr::wires(&mut bld).0.to_vec();
         let point1_mont_wires = G1Projective::wires(&mut bld).to_vec_wires();
+        let point2_mont_wires = G1Projective::wires(&mut bld).to_vec_wires();
+        let point3_mont_wires = G1Projective::wires(&mut bld).to_vec_wires();
 
 
         let out_wires = emit_hinted_double_scalar_mul(
             &mut bld,
-            &vec![scalar_wires],
-            &vec![point1_mont_wires],
+            &vec![scalar1_wires, scalar2_wires, scalar3_wires],
+            &vec![point1_mont_wires, point2_mont_wires, point3_mont_wires],
         );
 
         let witness = Fr::to_bits(scalar1).into_iter()
+            .chain(Fr::to_bits(scalar2).into_iter())
+            .chain(Fr::to_bits(scalar3).into_iter())
             .chain(G1Projective::to_bits(point1_mont).into_iter())
+            .chain(G1Projective::to_bits(point2_mont).into_iter())
+            .chain(G1Projective::to_bits(point3_mont).into_iter())
             .collect::<Vec<bool>>();
 
         let wires_bits = bld.eval_gates(&witness);
