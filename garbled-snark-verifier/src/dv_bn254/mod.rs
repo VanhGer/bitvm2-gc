@@ -9,3 +9,4 @@ pub mod g1;
 pub mod fr;
 pub mod dv_ref;
 pub mod types;
+mod hinted_double_sm;
