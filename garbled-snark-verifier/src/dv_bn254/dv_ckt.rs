@@ -37,6 +37,10 @@ pub fn get_input_indexes(bld: &mut CircuitAdapter) -> (Proof, PublicInputs, Trap
         mont_kzg_k: kzg_k,
         mont_a0: Fr(bld.fresh()),
         mont_b0: Fr(bld.fresh()),
+        x1: (Fr(bld.fresh()), bld.fresh_one()),
+        x2: (Fr(bld.fresh()), bld.fresh_one()),
+        z: (Fr(bld.fresh()), bld.fresh_one()),
+
     };
     (proof, rpin, secrets)
 }
@@ -52,6 +56,12 @@ pub struct Proof {
     pub mont_a0: Fr,
     /// b0
     pub mont_b0: Fr,
+    /// x1
+    pub x1: (Fr, usize),
+    /// x2
+    pub x2: (Fr, usize),
+    /// z
+    pub z: (Fr, usize),
 }
 
 /// RawPublicInputs
@@ -244,6 +254,16 @@ pub(crate) fn verify<T: CircuitTrait>(
     let proof_scalars_valid = bld.xor_wire(proof_scalars_invalid, one_wire); // both scalars valid
     let decoded_points_valid = bld.and_wire(is_proof_commit_p_on_curve, is_proof_kzg_k_on_curve); // both points valid
 
+    // decompose
+    let two_to_170 = Fr::two_to_170(bld);
+    let proof_x1_invalid = Fr::ge_unsigned(bld, &proof.x1.0.0, &two_to_170);
+    let proof_x2_invalid = Fr::ge_unsigned(bld, &proof.x2.0.0, &two_to_170);
+    let proof_z_invalid = Fr::ge_unsigned(bld, &proof.z.0.0, &two_to_170);
+
+    let x1x2_invalid = bld.or_wire(proof_x1_invalid, proof_x2_invalid); // either x1, x2 invalid
+    let decompose_invalid = bld.or_wire(x1x2_invalid, proof_z_invalid); // either x1, x2, z invalid
+    let decompose_valid = bld.xor_wire(decompose_invalid, one_wire); // all valid
+
     let point_and_decode_valid_stats = bld.gate_counts();
     println!("point_and_decode_valid_stats: {:?}", point_and_decode_valid_stats);
 
@@ -276,6 +296,9 @@ pub(crate) fn verify<T: CircuitTrait>(
 
     let u0_v0_stats = bld.gate_counts();
     println!("u0_v0_stats: {:?}", u0_v0_stats);
+
+
+    // Step 4. Check: x_1 G + x_2Q - zP = 0, using multi_scalar_mul_with_precompute
 
     let generator = G1Projective::wires_set_montgomery_generator(bld);
     let lhs = G1Projective::msm_montgomery_circuit(
@@ -312,40 +335,54 @@ mod test {
     use crate::dv_bn254::fp254impl::Fp254Impl;
     use crate::dv_bn254::fr::Fr;
     use crate::dv_bn254::g1::G1Projective;
+    use crate::dv_bn254::hinted_double_sm::hinted_double_scalar_mul::emit_hinted_double_scalar_mul;
 
-    fn initialize_witness() -> VerifierPayloadRef {
+    fn initialize_witness() -> VerifierPayloadRef{
         // Prepare VerifierPayloadRef
         let tau = FrRef::from_str(
-            "16182941859318853681113132547625168061780848020606917705886909352328641449447",
+            "11862927736293505976827355338938040996519579475528107310941684119781757391039",
         )
             .unwrap();
         let delta = FrRef::from_str(
-            "1386358569040211194277496369854236447924640692868989861989546836976256123776",
+            "19144933261297331633080959100481380589633074304003794613695593869462980578759",
         )
             .unwrap();
         let epsilon = FrRef::from_str(
-            "19902273041930411779697910799612905558671735917586419204128025082060670839903",
+            "313961560996054992893313828582054121800731311457442837960229611969948337040",
         )
             .unwrap();
         let mont_commit_p = ark_bn254::G1Projective::new_unchecked(
-            ark_bn254::Fq::from_str("17828526848398818524594272010037255222158469049154221871955648825738160508900").unwrap(),
-            ark_bn254::Fq::from_str("14170820817868591051981977221323237801250104508723967068773366962772917797098").unwrap(),
-            ark_bn254::Fq::from_str("2513762298069720657829538045439982366122625059238132972369886427106554100054").unwrap(),
+            ark_bn254::Fq::from_str("7945797433559704849311923614598929259737771858793098395236612582183144719173").unwrap(),
+            ark_bn254::Fq::from_str("17012034996486701113694275047646644230671894233797105837810220927620239598653").unwrap(),
+            ark_bn254::Fq::from_str("1904029105985936155224998850934598237583320194268951485119152920799350410912").unwrap(),
         );
         let mont_kzg_k = ark_bn254::G1Projective::new_unchecked(
-            ark_bn254::Fq::from_str("16107189865462081378229596490861223404542946800177144985196035470958801847361").unwrap(),
-            ark_bn254::Fq::from_str("3802773935032520992617144264570824192793931554569247968920659382962943815109").unwrap(),
-            ark_bn254::Fq::from_str("80507567559795152954437834756393180561412479055708978020511381804595023465").unwrap(),
+            ark_bn254::Fq::from_str("218840416271392248134913265936769272628298608502613289864227836162651470083").unwrap(),
+            ark_bn254::Fq::from_str("12507096977197660920086344758001040257535547413335347824125243167552228396643").unwrap(),
+            ark_bn254::Fq::from_str("7718594443256972252891810807829015169125545629599067047189461244308075009980").unwrap(),
         );
 
-        let a0 = FrRef::from_str(
-            "2975525620490834464405940205011309071747726351692005111228101901132749428958",
+        let mont_a0 = FrRef::from_str(
+            "2379383345977345328483769109781010318500935685616923216261946203557840245156",
         )
             .unwrap();
-        let b0 = FrRef::from_str(
-            "9701346963693590595658518476858392988245806407586431150638849218581259322452",
+        let mont_b0 = FrRef::from_str(
+            "10710067834367256827276997192305278081193710391606660405083208486036847880486",
         )
             .unwrap();
+
+        let x1_val = FrRef::from_str(
+            "117254209170240570118468483301402360720011190156626"
+        ).unwrap();
+        let x1 = (x1_val, false);
+        let x2_val = FrRef::from_str(
+            "428956628384832546334058967498472364665310775024525"
+        ).unwrap();
+        let x2 = (x2_val, false);
+        let z_val = FrRef::from_str(
+            "382966261084432891439040614202494776072682302885809"
+        ).unwrap();
+        let z = (z_val, true);
 
         let public_inputs = [
             FrRef::from_str("16217006396879640651787331949151919374620611580946319582101174263628714475489")
@@ -355,7 +392,7 @@ mod test {
         ];
 
         let witness = VerifierPayloadRef {
-            proof: ProofRef { mont_commit_p, mont_kzg_k, mont_a0: a0, mont_b0: b0 },
+            proof: ProofRef { mont_commit_p, mont_kzg_k, mont_a0, mont_b0, x1, x2, z },
             public_input: PublicInputsRef { public_inputs },
             trapdoor: TrapdoorRef { tau, delta, epsilon },
         };
@@ -432,7 +469,20 @@ mod test {
         let proof_scalars_invalid = bld.or_wire(proof_a0_invalid, proof_b0_invalid); // either invalid
         let proof_scalars_valid = bld.xor_wire(proof_scalars_invalid, one_wire); // both scalars valid
         let decoded_points_valid = bld.and_wire(is_proof_commit_p_on_curve, is_proof_kzg_k_on_curve); // both points valid
-        let valid = bld.and_wire(proof_scalars_valid, decoded_points_valid);
+
+        // decompose
+        let two_to_170 = Fr::two_to_170(&mut bld);
+        let proof_x1_invalid = Fr::ge_unsigned(&mut bld, &proof.x1.0.0, &two_to_170);
+        let proof_x2_invalid = Fr::ge_unsigned(&mut bld, &proof.x2.0.0, &two_to_170);
+        let proof_z_invalid = Fr::ge_unsigned(&mut bld, &proof.z.0.0, &two_to_170);
+
+        let x1x2_invalid = bld.or_wire(proof_x1_invalid, proof_x2_invalid); // either x1, x2 invalid
+        let decompose_invalid = bld.or_wire(x1x2_invalid, proof_z_invalid); // either x1, x2, z invalid
+        let decompose_valid = bld.xor_wire(decompose_invalid, one_wire); // all valid
+
+
+        let valid1 = bld.and_wire(proof_scalars_valid, decoded_points_valid);
+        let valid = bld.and_wire(valid1, decompose_valid);
         // eval
         let wires_bits = bld.eval_gates(&witness.to_bits());
         let valid_val = wires_bits[valid];
@@ -485,11 +535,11 @@ mod test {
         let v0_val = Fr::from_bits(v0_bits);
 
         let expected_u0 = ark_bn254::Fr::from_str(
-            "9743625272928946869194351638312418140554477278217161320708001866919619239351",
+            "21457562058599027886128781723011550118341889803802259009197664792048723713284",
         )
             .unwrap();
         let expected_v0 = ark_bn254::Fr::from_str(
-            "14697703236190320965425825895501867787787703590667291868986257847520837972012",
+            "18773909891129115237742565942774855385236068205643017366808288723990672538934",
         )
             .unwrap();
 
@@ -503,60 +553,78 @@ mod test {
     }
 
     #[test]
-    #[ignore]
-    fn test_point_computation() {
+    fn test_point_computation_hinted_msm() {
 
         let mont_commit_p = ark_bn254::G1Projective::new_unchecked(
-            ark_bn254::Fq::from_str("17828526848398818524594272010037255222158469049154221871955648825738160508900").unwrap(),
-            ark_bn254::Fq::from_str("14170820817868591051981977221323237801250104508723967068773366962772917797098").unwrap(),
-            ark_bn254::Fq::from_str("2513762298069720657829538045439982366122625059238132972369886427106554100054").unwrap(),
+            ark_bn254::Fq::from_str("7945797433559704849311923614598929259737771858793098395236612582183144719173").unwrap(),
+            ark_bn254::Fq::from_str("17012034996486701113694275047646644230671894233797105837810220927620239598653").unwrap(),
+            ark_bn254::Fq::from_str("1904029105985936155224998850934598237583320194268951485119152920799350410912").unwrap(),
         );
         let mont_kzg_k = ark_bn254::G1Projective::new_unchecked(
-            ark_bn254::Fq::from_str("16107189865462081378229596490861223404542946800177144985196035470958801847361").unwrap(),
-            ark_bn254::Fq::from_str("3802773935032520992617144264570824192793931554569247968920659382962943815109").unwrap(),
-            ark_bn254::Fq::from_str("80507567559795152954437834756393180561412479055708978020511381804595023465").unwrap(),
+            ark_bn254::Fq::from_str("218840416271392248134913265936769272628298608502613289864227836162651470083").unwrap(),
+            ark_bn254::Fq::from_str("12507096977197660920086344758001040257535547413335347824125243167552228396643").unwrap(),
+            ark_bn254::Fq::from_str("7718594443256972252891810807829015169125545629599067047189461244308075009980").unwrap(),
         );
 
-        let mont_u0 = ark_bn254::Fr::from_str("11652346764044857618553525053657312136468629477167387001167575917396119875544").unwrap();
-        let mont_v0 = ark_bn254::Fr::from_str("6813834760176976181591963068295107428614621550608555479227816612274682117051").unwrap();
-        let mont_r = ark_bn254::Fr::from(Fr::montgomery_r_as_biguint());
+        let x1_val = ark_bn254::Fr::from_str(
+            "117254209170240570118468483301402360720011190156626"
+        ).unwrap();
+        let x1 = (x1_val, false);
+        let x2_val = ark_bn254::Fr::from_str(
+            "428956628384832546334058967498472364665310775024525"
+        ).unwrap();
+        let x2 = (x2_val, false);
+        let z_val = ark_bn254::Fr::from_str(
+            "382966261084432891439040614202494776072682302885809"
+        ).unwrap();
+        let z = (z_val, true);
 
         let mut bld = CircuitAdapter::default();
+        let x1_wires = (Fr::wires(&mut bld), bld.fresh_one());
+        let x2_wires = (Fr::wires(&mut bld), bld.fresh_one());
+        let z_wires = (Fr::wires(&mut bld), bld.fresh_one());
         let mont_p_wires = G1Projective::wires(&mut bld);
         let mont_k_wires = G1Projective::wires(&mut bld);
-        let mont_u0_wires = Fr::wires(&mut bld);
-        let mont_v0_wires = Fr::wires(&mut bld);
-
-        let mont_r_wires = Fr::wires_set(&mut bld, mont_r.clone());
         let mont_generator_wires = G1Projective::wires_set_montgomery_generator(&mut bld);
 
-        let lhs_wires = G1Projective::msm_montgomery_circuit(
+        let neg_ws_gen = G1Projective::negate_with_neg_selector(
             &mut bld,
-            &[mont_v0_wires.0.to_vec(), mont_u0_wires.0.to_vec()],
-            &[mont_k_wires.to_vec_wires(), mont_generator_wires],
+            &mont_generator_wires,
+            x1_wires.1,
         );
 
-        let rhs_wires = G1Projective::scalar_mul_montgomery_circuit(
+        let neg_ws_k = G1Projective::negate_with_neg_selector(
             &mut bld,
-            &mont_r_wires.0.to_vec(),
+            &mont_k_wires.to_vec_wires(),
+            x2_wires.1,
+        );
+
+        let neg_ws_p = G1Projective::negate_with_pos_selector(
+            &mut bld,
             &mont_p_wires.to_vec_wires(),
+            z_wires.1,
         );
 
-        let witness = G1Projective::to_bits(mont_commit_p)
-            .into_iter()
-            .chain(G1Projective::to_bits(mont_kzg_k))
-            .chain(Fr::to_bits(mont_u0).into_iter())
-            .chain(Fr::to_bits(mont_v0).into_iter())
+        let out_wires = emit_hinted_double_scalar_mul(
+            &mut bld,
+            &vec![x1_wires.0.0.to_vec(), x2_wires.0.0.to_vec(), z_wires.0.0.to_vec()],
+            &vec![neg_ws_gen, neg_ws_k, neg_ws_p],
+        );
+
+        let witness = Fr::to_bits(x1.0).into_iter()
+            .chain([x1.1])
+            .chain(Fr::to_bits(x2.0).into_iter())
+            .chain([x2.1])
+            .chain(Fr::to_bits(z.0).into_iter())
+            .chain([z.1])
+            .chain(G1Projective::to_bits(mont_commit_p).into_iter())
+            .chain(G1Projective::to_bits(mont_kzg_k).into_iter())
             .collect::<Vec<bool>>();
 
         let wires_bits = bld.eval_gates(&witness);
-        let lhs_bits = lhs_wires.iter().map(|id| wires_bits[*id]).collect();
-        let rhs_bits = rhs_wires.iter().map(|id| wires_bits[*id]).collect();
-
-        let lhs = G1Projective::from_bits_unchecked(lhs_bits);
-        let rhs = G1Projective::from_bits_unchecked(rhs_bits);
-        assert_eq!(lhs, rhs);
-
+        let out_bits = out_wires.iter().map(|w| wires_bits[*w]).collect::<Vec<bool>>();
+        let out_point = G1Projective::from_bits(out_bits);
+        assert_eq!(out_point, G1Projective::as_montgomery(ark_bn254::G1Projective::ZERO));
         let stats = bld.gate_counts();
         println!("{stats}");
     }

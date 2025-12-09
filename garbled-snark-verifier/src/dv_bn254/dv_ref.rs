@@ -4,7 +4,7 @@ use crate::dv_bn254::fr::FR_LEN;
 use crate::dv_bn254::g1::{G1Projective, G1_PROJECTIVE_LEN};
 use crate::dv_bn254::types::{RawProof, RawTrapdoor, RawVerifierPayload};
 
-const PROOF_BIT_LEN: usize = G1_PROJECTIVE_LEN * 2 + FR_LEN * 2;
+const PROOF_BIT_LEN: usize = G1_PROJECTIVE_LEN * 2 + FR_LEN * 5 + 3;
 const PUBINP_BIT_LEN: usize = 2 * FR_LEN;
 const TRAPDOOR_BIT_LEN: usize = FR_LEN * 3;
 pub(crate) const WITNESS_BIT_LEN: usize = PROOF_BIT_LEN + PUBINP_BIT_LEN + TRAPDOOR_BIT_LEN;
@@ -69,6 +69,12 @@ pub struct ProofRef {
     pub mont_a0: FrRef,
     /// b0
     pub mont_b0: FrRef,
+    /// x1
+    pub x1: (FrRef, bool),
+    /// x2
+    pub x2: (FrRef, bool),
+    /// z
+    pub z: (FrRef, bool),
 }
 
 #[derive(Debug)]
@@ -82,6 +88,9 @@ impl ProofRef {
         let mut kzg_k = G1Projective::to_bits(self.mont_kzg_k);
         let mut a0 = frref_to_bits(&self.mont_a0).to_vec();
         let mut b0 = frref_to_bits(&self.mont_b0).to_vec();
+        let mut x1_val = frref_to_bits(&self.x1.0).to_vec();
+        let mut x2_val = frref_to_bits(&self.x2.0).to_vec();
+        let mut z_val = frref_to_bits(&self.z.0).to_vec();
 
         let mut witness = vec![];
 
@@ -89,6 +98,12 @@ impl ProofRef {
         witness.append(&mut kzg_k);
         witness.append(&mut a0);
         witness.append(&mut b0);
+        witness.append(&mut x1_val);
+        witness.push(self.x1.1);
+        witness.append(&mut x2_val);
+        witness.push(self.x2.1);
+        witness.append(&mut z_val);
+        witness.push(self.z.1);
 
         witness.try_into().unwrap()
     }
