@@ -99,7 +99,6 @@ mod test {
         witness
     }
     #[test]
-    #[ignore]
     fn test_dv_snark_verifier_circuit_dvbn254() {
         // Prepare VerifierPayloadRef
         let witness = initialize_witness();

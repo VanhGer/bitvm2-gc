@@ -1,6 +1,7 @@
 //! Binary circuit implementation of DV Verifier Program
 //!
 
+use ark_ff::AdditiveGroup;
 use crate::circuits::sect233k1::builder::{CircuitAdapter, CircuitTrait};
 use crate::circuits::sect233k1::blake3_ckt;
 use crate::dv_bn254::bigint::U254;
@@ -12,6 +13,7 @@ use super::{
 };
 use crate::dv_bn254::fq::FQ_LEN;
 use crate::dv_bn254::g1::G1Projective;
+use crate::dv_bn254::hinted_double_sm::hinted_double_scalar_mul::emit_hinted_double_scalar_mul;
 
 const PROOF_BIT_LEN: usize = FQ_LEN * 3 * 2 + FR_LEN * 2;
 const PUBINP_BIT_LEN: usize = 2 * FR_LEN;
@@ -299,29 +301,55 @@ pub(crate) fn verify<T: CircuitTrait>(
 
 
     // Step 4. Check: x_1 G + x_2Q - zP = 0, using multi_scalar_mul_with_precompute
-
-    let generator = G1Projective::wires_set_montgomery_generator(bld);
-    let lhs = G1Projective::msm_montgomery_circuit(
+    let mont_generator_wires = G1Projective::wires_set_montgomery_generator(bld);
+    let neg_ws_gen = G1Projective::negate_with_neg_selector(
         bld,
-        &[u0, v0],
-        &[generator, proof.mont_kzg_k.to_vec_wires()]
+        &mont_generator_wires,
+        proof.x1.1,
     );
 
-    let lhs_stats = bld.gate_counts();
-    println!("lhs_stats: {:?}", lhs_stats);
-
-    let mont_r = ark_bn254::Fr::from(Fr::montgomery_r_as_biguint());
-    let mont_r_wires = Fr::wires_set(bld, mont_r.clone());
-
-    let rhs = G1Projective::scalar_mul_montgomery_circuit(
+    let neg_ws_k = G1Projective::negate_with_neg_selector(
         bld,
-        &mont_r_wires.0.to_vec(),
+        &proof.mont_kzg_k.to_vec_wires(),
+        proof.x2.1,
+    );
+
+    let neg_ws_p = G1Projective::negate_with_pos_selector(
+        bld,
         &proof.mont_commit_p.to_vec_wires(),
+        proof.z.1,
     );
 
-    let verify_success = G1Projective::equal(bld, &lhs, &rhs);
-    let eq_with_valid_points = bld.and_wire(verify_success, decoded_points_valid);
-    bld.and_wire(eq_with_valid_points, proof_scalars_valid)
+    let lhs = emit_hinted_double_scalar_mul(
+        bld,
+        &vec![proof.x1.0.0.to_vec(), proof.x2.0.0.to_vec(), proof.z.0.0.to_vec()],
+        &vec![neg_ws_gen, neg_ws_k, neg_ws_p],
+    );
+    let rhs = G1Projective::wires_set_montgomery(bld, ark_bn254::G1Projective::ZERO);
+    let step4_valid = G1Projective::equal(bld, &lhs, &rhs.to_vec_wires());
+
+    // Step 5. Check u0 * z - x1 = 0 && v0 * z - x2 = 0
+    // to montgomery
+    let mont_x1 = Fr::to_montgomery_circuit(bld, &proof.x1.0.0);
+    let mont_x2 = Fr::to_montgomery_circuit(bld, &proof.x2.0.0);
+    let mont_z = Fr::to_montgomery_circuit(bld, &proof.z.0.0);
+
+    let neg_ws_x1 = Fr::negate_with_selector(bld, &mont_x1, proof.x1.1);
+    let neg_ws_x2 = Fr::negate_with_selector(bld, &mont_x2, proof.x2.1);
+    let neg_ws_z = Fr::negate_with_selector(bld, &mont_z, proof.z.1);
+
+    let u0_z = Fr::mul_montgomery(bld, &u0, &neg_ws_z);
+    let u0_z_sub_x1 = Fr::sub(bld, &u0_z, &neg_ws_x1);
+    let check1 = Fr::equal_zero(bld, &u0_z_sub_x1);
+    let v0_z = Fr::mul_montgomery(bld, &v0, &neg_ws_z);
+    let v0_z_sub_x2 = Fr::sub(bld, &v0_z, &neg_ws_x2);
+    let check2 = Fr::equal_zero(bld, &v0_z_sub_x2);
+    let step5_valid = bld.and_wire(check1, check2);
+
+    let decode_decompose_valid = bld.and_wire(decompose_valid, decoded_points_valid);
+    let proof_elements_valid = bld.and_wire(decode_decompose_valid, proof_scalars_valid);
+    let step45_valid = bld.and_wire(step4_valid, step5_valid);
+    bld.and_wire(proof_elements_valid, step45_valid)
 }
 
 #[cfg(test)]
