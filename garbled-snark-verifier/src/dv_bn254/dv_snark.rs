@@ -108,6 +108,7 @@ mod test {
 
         let output_value = wires_bits[info.output_index];
         println!("output_value: {}", output_value);
+        assert_eq!(output_value, true);
 
         let stats = bld.gate_counts();
         println!("Gate counts: {:?}", stats);
