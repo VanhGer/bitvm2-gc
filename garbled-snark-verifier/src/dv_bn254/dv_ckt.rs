@@ -267,7 +267,7 @@ pub(crate) fn verify<T: CircuitTrait>(
     let decompose_valid = bld.xor_wire(decompose_invalid, one_wire); // all valid
 
     let point_and_decode_valid_stats = bld.gate_counts();
-    println!("point_and_decode_valid_stats: {:?}", point_and_decode_valid_stats);
+    println!("point_and_decode_decompose_valid_stats: {:?}", point_and_decode_valid_stats);
 
     let fs_challenge_alpha =
         get_fs_challenge(bld, &proof.mont_commit_p, public_inputs.public_inputs.clone(), vec![], vec![]);
@@ -328,6 +328,9 @@ pub(crate) fn verify<T: CircuitTrait>(
     let rhs = G1Projective::wires_set_montgomery(bld, ark_bn254::G1Projective::ZERO);
     let step4_valid = G1Projective::equal(bld, &lhs, &rhs.to_vec_wires());
 
+    let step4_stats = bld.gate_counts();
+    println!("step4_stats: {:?}", step4_stats);
+
     // Step 5. Check u0 * z - x1 = 0 && v0 * z - x2 = 0
     // to montgomery
     let mont_x1 = Fr::to_montgomery_circuit(bld, &proof.x1.0.0);
@@ -345,6 +348,9 @@ pub(crate) fn verify<T: CircuitTrait>(
     let v0_z_sub_x2 = Fr::sub(bld, &v0_z, &neg_ws_x2);
     let check2 = Fr::equal_zero(bld, &v0_z_sub_x2);
     let step5_valid = bld.and_wire(check1, check2);
+
+    let step5_stats = bld.gate_counts();
+    println!("step5_stats: {:?}", step5_stats);
 
     let decode_decompose_valid = bld.and_wire(decompose_valid, decoded_points_valid);
     let proof_elements_valid = bld.and_wire(decode_decompose_valid, proof_scalars_valid);
