@@ -152,10 +152,11 @@ pub fn check_guest(
     // create input for ciphertext check syscall
     let mut input = Vec::new();
     let mut index = 0;
+    input.extend_from_slice(&DELTA.0);
     for part in 0..SUB_INPUT_GATES_PARTS {
         let sub_gates: SerializableSubCircuitGates<SUB_INPUT_GATES_PART_SIZE> = deserialize_from_bytes(&sub_gates_parts[part]);
         for i in 0..sub_gates.gates.len() {
-            if sub_gates.gates[i].gate_type == 0 { // and gate
+            if sub_gates.gates[i].gate_type < 8 { // and | or gate
                 let gate = &sub_gates.gates[i];
                 let base = 8usize;
                 let start_a0 = base + (gate.wire_a_id as usize) * LABEL_SIZE;
@@ -168,6 +169,8 @@ pub fn check_guest(
                 let h0 = a0.hash_ext(gid);
                 let h1 = a1.hash_ext(gid);
 
+                // align memory
+                input.extend_from_slice(&(sub_gates.gates[i].gate_type as u32).to_le_bytes().to_vec());
                 input.extend_from_slice(&h0.0);
                 input.extend_from_slice(&h1.0);
                 input.extend_from_slice(&sub_wires[start_b0..start_b0 + LABEL_SIZE]);
