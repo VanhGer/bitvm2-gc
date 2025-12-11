@@ -129,3 +129,14 @@ pub fn load_witness_from_files(
 
     w.into()
 }
+
+#[test]
+#[ignore]
+fn test_load_witness_from_files_sect233k1() {
+    let witness = load_witness_from_files(
+        "./data/dv-proof",
+        "./data/public_inputs.bin",
+        "./data/trapdoor.bin",
+    );
+    println!("witness: {:?}", witness);
+}
