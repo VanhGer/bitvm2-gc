@@ -9,8 +9,8 @@ use crate::{
 
 use std::sync::atomic::Ordering;
 
-pub const SUB_CIRCUIT_MAX_GATES: usize = 1_000_000;
-pub const SUB_INPUT_GATES_PART_SIZE: usize = 200_000;
+pub const SUB_CIRCUIT_MAX_GATES: usize = 500_000;
+pub const SUB_INPUT_GATES_PART_SIZE: usize = 100_000;
 pub const SUB_INPUT_GATES_PARTS: usize = 5;
 pub const LABEL_SIZE: usize = 16;
 // FIXME: set up a private global difference

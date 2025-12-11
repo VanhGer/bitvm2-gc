@@ -19,45 +19,27 @@ mod utils;
 /// The ELF we want to execute inside the zkVM.
 const ELF: &[u8] = include_elf!("verifiable-circuit");
 
-// this circuit receive 2 Fr numbers and a selector bit
+// this circuit have 500 gates, and
 // return the selected number
 fn custom_simple_circuit() -> Circuit {
     let mut bld = CircuitAdapter::default();
-    const N: usize = 200;
-    let a: [usize; N] = bld.fresh();
-    let b: [usize; N] = bld.fresh();
-    let sel = bld.fresh_one();
+    let a = bld.fresh_one();
+    let b = bld.fresh_one();
 
-    let mut res = [bld.zero(); N];
-    for i in 0..N {
-        let d = bld.xor_wire(a[i], b[i]);
-        let xd = bld.and_wire(sel, d);
-        res[i] = bld.or_wire(xd, a[i]);
-        // res[i] = d;
+    let mut l = a;
+    let mut r = b;
+    for i in 0..498150 {
+        let o = bld.xor_wire(l, r);
+        l = r;
+        r = o;
+    }
+    for i in 0..1850 {
+        let o = bld.and_wire(l, r);
+        l = r;
+        r = o;
     }
 
-    // witness
-    let k1_be_bytes = vec![
-        0, 0, 0, 51, 96, 176, 10, 90, 39, 174, 104, 4, 29, 148, 187, 28, 109, 98, 171, 127,
-        230, 48, 143, 66, 84, 143, 149, 177, 187, 210, 141, 20,
-    ];
-    let k2_be_bytes = vec![
-        0, 0, 0, 26, 108, 65, 9, 244, 48, 225, 36, 47, 208, 219, 69, 144, 176, 74, 146, 191,
-        44, 28, 58, 190, 137, 175, 120, 202, 225, 15, 139, 63,
-    ];
-    let k1 = BigUint::from_bytes_be(&k1_be_bytes);
-    let k2 = BigUint::from_bytes_be(&k2_be_bytes);
-    let k1witness = frref_to_bits(&k1);
-    let k2witness = frref_to_bits(&k2);
-
-    let k1witness = k1witness[..N].to_vec();
-    let k2witness = k2witness[..N].to_vec();
-
-    let mut witness = Vec::<bool>::new();
-    witness.extend_from_slice(&k1witness);
-    witness.extend_from_slice(&k2witness);
-    // witness.push(true); // selector k2
-
+    let witness = vec![false, true];
     let circuit = bld.build(&witness);
     circuit
 }
