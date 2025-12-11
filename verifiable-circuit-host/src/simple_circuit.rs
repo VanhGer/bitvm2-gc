@@ -86,15 +86,15 @@ fn main() {
     info!("sub_ciphertexts size: {:?} bytes", sub_ciphertexts.len());
 
     // Write the read sub-circuit to a file for inspection or later use.
-    for part in 0..SUB_INPUT_GATES_PARTS {
-        std::fs::write(format!("garbled_gates_{}.bin", part), &sub_gates[part])
-            .expect("Failed to write sub-gate to garbled_gates.bin");
-    }
-    std::fs::write("garbled_wires.bin", &sub_wires)
-        .expect("Failed to write sub-wires to garbled_wires.bin");
-    std::fs::write("garbled_ciphertexts.bin", &sub_ciphertexts)
-        .expect("Failed to write sub-ciphertexts to garbled_ciphertexts.bin");
-    info!("Saved sub-circuit to file");
+    // for part in 0..SUB_INPUT_GATES_PARTS {
+    //     std::fs::write(format!("garbled_gates_{}.bin", part), &sub_gates[part])
+    //         .expect("Failed to write sub-gate to garbled_gates.bin");
+    // }
+    // std::fs::write("garbled_wires.bin", &sub_wires)
+    //     .expect("Failed to write sub-wires to garbled_wires.bin");
+    // std::fs::write("garbled_ciphertexts.bin", &sub_ciphertexts)
+    //     .expect("Failed to write sub-ciphertexts to garbled_ciphertexts.bin");
+    // info!("Saved sub-circuit to file");
 
     for i in 0..SUB_INPUT_GATES_PARTS {
         stdin.write_vec(sub_gates[i].clone());
