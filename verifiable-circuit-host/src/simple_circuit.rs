@@ -115,7 +115,7 @@ fn main() {
     let start = Instant::now();
     // Generate the proof for the given guest and input.
     let (pk, vk) = client.setup(ELF);
-    let proof = client.prove(&pk, stdin).run().unwrap();
+    let proof = client.prove(&pk, stdin).compressed().run().unwrap();
 
     let elapsed = start.elapsed();
     info!(step = "generated proof", elapsed =? elapsed, "finish proof generation");
