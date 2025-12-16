@@ -28,12 +28,13 @@ fn custom_simple_circuit() -> Circuit {
 
     let mut l = a;
     let mut r = b;
-    for i in 0..1992593 {
+    let non_free = 7024;
+    for i in 0..SUB_CIRCUIT_MAX_GATES - non_free {
         let o = bld.xor_wire(l, r);
         l = r;
         r = o;
     }
-    for i in 0..7407 {
+    for i in 0..non_free {
         let o = bld.and_wire(l, r);
         l = r;
         r = o;
