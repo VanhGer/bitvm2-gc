@@ -121,30 +121,6 @@ impl Fr {
         Self::from_montgomery(Self::from_wires(bld, fr))
     }
 
-    // ───────────────────  a ≥ c   (one wire, MSB first)  ─────────────────────
-    //  Gate cost: 4·W XOR + 3·W AND
-    pub(crate) fn ge_unsigned<T: CircuitTrait>(bld: &mut T, a: &[usize], c: &[usize]) -> usize {
-        assert_eq!(a.len(), Self::N_BITS);
-        assert_eq!(c.len(), Self::N_BITS);
-        let w = a.len();
-        let mut gt = bld.zero();
-        let mut eq = bld.one();
-        for i in (0..w).rev() {
-            let ai = a[i];
-            let bi = c[i];
-            let m0 = not(bld, bi);
-            let ai_gt_bi = bld.and_wire(ai, m0);
-            //let _m1 = not(b, ai);
-            //let ai_lt_bi = b.and_wire(m1, bi);
-            let m2 = bld.and_wire(eq, ai_gt_bi);
-            gt = bld.or_wire(gt, m2);
-            let m3 = bld.xor_wire(ai, bi);
-            let m4 = not(bld, m3);
-            eq = bld.and_wire(eq, m4); // keep eq flag
-        }
-        bld.or_wire(gt, eq) // ge = gt ∨ eq
-    }
-
     fn add_constant<T: CircuitTrait>(bld: &mut T, a: &[usize], b: ark_bn254::Fr) -> Vec<usize> {
         assert_eq!(a.len(), Self::N_BITS);
         if b == ark_bn254::Fr::ZERO {

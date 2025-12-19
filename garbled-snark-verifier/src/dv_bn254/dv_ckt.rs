@@ -11,7 +11,7 @@ use super::{
         FR_LEN, Fr,
     },
 };
-use crate::dv_bn254::fq::FQ_LEN;
+use crate::dv_bn254::fq::{Fq, FQ_LEN};
 use crate::dv_bn254::g1::G1Projective;
 use crate::dv_bn254::hinted_double_sm::hinted_double_scalar_mul::emit_hinted_double_scalar_mul;
 
@@ -243,17 +243,38 @@ pub(crate) fn verify<T: CircuitTrait>(
     public_inputs: PublicInputs,
     secrets: Trapdoor,
 ) -> usize {
+    let one_wire = bld.one();
+    let fr_modulus = U254::wires_set_from_number(bld, &Fr::modulus_as_biguint());
+    let proof_a0_invalid = Fr::ge_unsigned(bld, &proof.mont_a0.0, &fr_modulus); // a0 > R
+    let proof_b0_invalid = Fr::ge_unsigned(bld, &proof.mont_b0.0, &fr_modulus); // b0 > R
+    let a0_b0_invalid = bld.or_wire(proof_a0_invalid, proof_b0_invalid); // either a0 or b0 invalid
+    // public inputs
+    let mut proof_pubinp_invalid = Fr::ge_unsigned(bld, &public_inputs.public_inputs[0].0, &fr_modulus);
+    for i in 1..public_inputs.public_inputs.len() {
+        let pubinp_invalid = Fr::ge_unsigned(bld, &public_inputs.public_inputs[i].0, &fr_modulus);
+        proof_pubinp_invalid = bld.or_wire(proof_pubinp_invalid, pubinp_invalid);
+    }
+    // trapdoor
+    let proof_tau_invalid = Fr::ge_unsigned(bld, &secrets.tau.0, &fr_modulus);
+    let proof_delta_invalid = Fr::ge_unsigned(bld, &secrets.delta.0, &fr_modulus);
+    let proof_epsilon_invalid = Fr::ge_unsigned(bld, &secrets.epsilon.0, &fr_modulus);
+    let tau_delta_invalid = bld.or_wire(proof_tau_invalid, proof_delta_invalid);
+    let trapdoor_invalid = bld.or_wire(tau_delta_invalid, proof_epsilon_invalid);
+    let a0_b0_trapdoor_invalid = bld.or_wire(a0_b0_invalid, trapdoor_invalid); // either a0, b0, or trapdoor invalid
+
+    // point scalars
+    let commit_p_scalar_valid = G1Projective::emit_point_scalar_valid(bld, &proof.mont_commit_p);
+    let kzg_k_scalar_valid = G1Projective::emit_point_scalar_valid(bld, &proof.mont_kzg_k);
+    let point_scalars_valid = bld.and_wire(commit_p_scalar_valid, kzg_k_scalar_valid); // both point scalars valid
+
+    let proof_scalars_invalid = bld.or_wire(proof_pubinp_invalid, a0_b0_trapdoor_invalid); // either invalid
+    let scalars_valid = bld.xor_wire(proof_scalars_invalid, one_wire); // both scalars valid
+    let proof_scalars_valid = bld.and_wire(scalars_valid, point_scalars_valid);
+
     let is_proof_commit_p_on_curve =
         G1Projective::emit_projective_montgomery_point_is_on_curve(bld, &proof.mont_commit_p);
     let is_proof_kzg_k_on_curve =
         G1Projective::emit_projective_montgomery_point_is_on_curve(bld, &proof.mont_kzg_k);
-
-    let one_wire = bld.one();
-    let fr_modulus = U254::wires_set_from_number(bld, &Fr::modulus_as_biguint());
-    let proof_a0_invalid = Fr::ge_unsigned(bld, &proof.mont_a0.0, &fr_modulus); // a0 should be less than modulus
-    let proof_b0_invalid = Fr::ge_unsigned(bld, &proof.mont_b0.0, &fr_modulus);
-    let proof_scalars_invalid = bld.or_wire(proof_a0_invalid, proof_b0_invalid); // either invalid
-    let proof_scalars_valid = bld.xor_wire(proof_scalars_invalid, one_wire); // both scalars valid
     let decoded_points_valid = bld.and_wire(is_proof_commit_p_on_curve, is_proof_kzg_k_on_curve); // both points valid
 
     // decompose

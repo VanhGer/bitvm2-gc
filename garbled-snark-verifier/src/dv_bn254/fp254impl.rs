@@ -58,7 +58,7 @@ pub trait Fp254Impl: Sized {
         U254::equal(bld, a, b)
     }
 
-    fn equal_constant<T: CircuitTrait> (bld: &mut T, a: &[usize], b: ark_bn254::Fq) -> usize {
+    fn equal_constant_fq<T: CircuitTrait> (bld: &mut T, a: &[usize], b: ark_bn254::Fq) -> usize {
         U254::equal_constant(bld, a, &BigUint::from(b))
     }
 
@@ -69,7 +69,6 @@ pub trait Fp254Impl: Sized {
     fn add<T: CircuitTrait> (bld: &mut T, a: &[usize], b: &[usize]) -> Vec<usize> {
         assert_eq!(a.len(), Self::N_BITS);
         assert_eq!(b.len(), Self::N_BITS);
-
         let mut wires_1 = U254::add(bld, a, b);
         let u = wires_1.pop().unwrap();
         let c = Self::not_modulus_as_biguint();
@@ -129,6 +128,31 @@ pub trait Fp254Impl: Sized {
         let a_3 = Self::add(bld, &a_2, a);
         a_3
     }
+
+    // ───────────────────  a ≥ c   (one wire, MSB first)  ─────────────────────
+    //  Gate cost: 4·W XOR + 3·W AND
+    fn ge_unsigned<T: CircuitTrait>(bld: &mut T, a: &[usize], c: &[usize]) -> usize {
+        assert_eq!(a.len(), Self::N_BITS);
+        assert_eq!(c.len(), Self::N_BITS);
+        let w = a.len();
+        let mut gt = bld.zero();
+        let mut eq = bld.one();
+        for i in (0..w).rev() {
+            let ai = a[i];
+            let bi = c[i];
+            let m0 = not(bld, bi);
+            let ai_gt_bi = bld.and_wire(ai, m0);
+            //let _m1 = not(b, ai);
+            //let ai_lt_bi = b.and_wire(m1, bi);
+            let m2 = bld.and_wire(eq, ai_gt_bi);
+            gt = bld.or_wire(gt, m2);
+            let m3 = bld.xor_wire(ai, bi);
+            let m4 = not(bld, m3);
+            eq = bld.and_wire(eq, m4); // keep eq flag
+        }
+        bld.or_wire(gt, eq) // ge = gt ∨ eq
+    }
+
 
     fn montgomery_reduce<T: CircuitTrait>(bld: &mut T, x: &[usize]) -> Vec<usize> {
         let x_low = x[..254].to_vec();
