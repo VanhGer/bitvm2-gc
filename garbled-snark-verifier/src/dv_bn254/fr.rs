@@ -2,7 +2,7 @@ use crate::{
     dv_bn254::{fp254impl::Fp254Impl},
     circuits::bn254::utils::create_rng
 };
-use ark_ff::{AdditiveGroup, UniformRand};
+use ark_ff::{AdditiveGroup, Field, UniformRand};
 use num_bigint::BigUint;
 use crate::circuits::sect233k1::builder::CircuitTrait;
 use crate::dv_bn254::basic::not;

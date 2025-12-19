@@ -148,6 +148,22 @@ impl Fq {
         U254::select(bld, &wires_1, &wires_2, s)
     }
 
+    fn mul_by_constant_montgomery<T: CircuitTrait>(bld: &mut T, a: &[usize], b: ark_bn254::Fq) -> Vec<usize> {
+        assert_eq!(a.len(), Self::N_BITS);
+
+        if b == ark_bn254::Fq::ZERO {
+            return Fq::wires_set(bld, ark_bn254::Fq::ZERO).0.to_vec();
+        }
+
+        if b == Fq::as_montgomery(ark_bn254::Fq::ONE) {
+            return a.to_vec();
+        }
+
+        let mul_circuit = U254::mul_by_constant(bld, a, b.into());
+        let reduction_circuit = Self::montgomery_reduce(bld, &mul_circuit);
+        reduction_circuit
+    }
+
     pub fn inverse<T: CircuitTrait>(bld: &mut T, a: &[usize]) -> (Vec<usize>, usize) {
         assert_eq!(a.len(), Self::N_BITS);
         // check if a is zero
@@ -309,7 +325,7 @@ impl Fq {
 
     pub fn inverse_montgomery<T: CircuitTrait>(bld: &mut T, a: &[usize]) -> (Vec<usize>, usize) {
         let (b, is_valid_input) = Self::inverse(bld, a);
-        let result = Self::mul_by_fq_constant_montgomery(
+        let result = Self::mul_by_constant_montgomery(
             bld,
             &b,
             ark_bn254::Fq::from(Fq::montgomery_r_as_biguint()).square()

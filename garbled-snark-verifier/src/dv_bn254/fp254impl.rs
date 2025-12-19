@@ -77,7 +77,6 @@ pub trait Fp254Impl: Sized {
         let v = U254::less_than_constant(bld, &wires_1, &Self::modulus_as_biguint());
         let not_u = not(bld, u);
         let s = bld.and_wire(not_u, v);
-
         let wires_3 = U254::select(bld, &wires_1, &wires_2, s);
         wires_3
     }
@@ -87,8 +86,6 @@ pub trait Fp254Impl: Sized {
     fn sub<T: CircuitTrait>(bld: &mut T, a: &[usize], b: &[usize]) -> Vec<usize> {
         assert_eq!(a.len(), Self::N_BITS);
         assert_eq!(b.len(), Self::N_BITS);
-
-
         let neg_b = Self::neg(bld, b);
         let result = Self::add(bld, a, &neg_b);
         result
@@ -96,7 +93,6 @@ pub trait Fp254Impl: Sized {
 
     fn double<T: CircuitTrait>(bld: &mut T, a: &[usize]) -> Vec<usize> {
         assert_eq!(a.len(), Self::N_BITS);
-
         let mut aa = a.to_vec();
         let u = aa.pop().unwrap();
         let mut shifted_wires = vec![bld.zero()];
@@ -183,41 +179,8 @@ pub trait Fp254Impl: Sized {
         reduction_circuit
     }
 
-    fn mul_by_fq_constant_montgomery<T: CircuitTrait>(bld: &mut T, a: &[usize], b: ark_bn254::Fq) -> Vec<usize> {
-        assert_eq!(a.len(), Self::N_BITS);
-
-        if b == ark_bn254::Fq::ZERO {
-            return Fq::wires_set(bld, ark_bn254::Fq::ZERO).0.to_vec();
-        }
-
-        if b == Fq::as_montgomery(ark_bn254::Fq::ONE) {
-            return a.to_vec();
-        }
-
-        let mul_circuit = U254::mul_by_constant(bld, a, b.into());
-        let reduction_circuit = Self::montgomery_reduce(bld, &mul_circuit);
-        reduction_circuit
-    }
-
-    fn mul_by_fr_constant_montgomery<T: CircuitTrait>(bld: &mut T, a: &[usize], b: ark_bn254::Fr) -> Vec<usize> {
-        assert_eq!(a.len(), Self::N_BITS);
-
-        if b == ark_bn254::Fr::ZERO {
-            return Fr::wires_set(bld, ark_bn254::Fr::ZERO).0.to_vec();
-        }
-
-        if b == Fr::as_montgomery(ark_bn254::Fr::ONE) {
-            return a.to_vec();
-        }
-
-        let mul_circuit = U254::mul_by_constant(bld, a, b.into());
-        let reduction_circuit = Self::montgomery_reduce(bld, &mul_circuit);
-        reduction_circuit
-    }
-
     fn square_montgomery<T: CircuitTrait>(bld: &mut T, a: &[usize]) -> Vec<usize> {
         assert_eq!(a.len(), Self::N_BITS);
-
         Self::mul_montgomery(bld, a, a)
     }
 
