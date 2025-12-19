@@ -234,6 +234,8 @@ pub(crate) fn emit_point_frob<T: CircuitTrait>(bld: &mut T, p1: &CurvePoint) -> 
     CurvePoint { x: p3_x, s: p3_s, z: p3_z, t: p3_t }
 }
 
+//
+
 /// Converts an affine Lopez–Dahab point to projective representation and validates it.
 /// Verify that (x, s) lies on the curve: s^2 + x*s == x^4 + 1.
 pub(crate) fn emit_affine_point_is_on_curve<T: CircuitTrait>(
