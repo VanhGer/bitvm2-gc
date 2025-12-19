@@ -368,8 +368,7 @@ pub(crate) fn verify<T: CircuitTrait>(
     let (proof_commit_p, is_proof_commit_p_on_curve) =
         emit_affine_point_is_on_curve(bld, &proof.commit_p);
     let (proof_kzg_k, is_proof_kzg_k_on_curve) = emit_affine_point_is_on_curve(bld, &proof.kzg_k);
-    let points_invalid = bld.or_wire(is_proof_commit_p_on_curve, is_proof_kzg_k_on_curve);
-    let points_valid = bld.xor_wire(points_invalid, one_wire); // both valid
+    let decoded_points_valid = bld.and_wire(is_proof_commit_p_on_curve, is_proof_kzg_k_on_curve); // both valid
 
     // proof a0, b0
     let proof_a0_invalid = ge_unsigned(bld, &proof.a0, &fr_modulus); // a0 should be less than modulus
@@ -471,7 +470,7 @@ pub(crate) fn verify<T: CircuitTrait>(
     let verify_success = emit_point_equals(bld, &res, &identity);
     let hinted_success = bld.and_wire(verify_success, diff_zero);
     let scalar_valid = bld.and_wire(proof_scalars_valid, decompose_valid);
-    let scalar_point_valid = bld.and_wire(scalar_valid, points_valid);
+    let scalar_point_valid = bld.and_wire(scalar_valid, decoded_points_valid);
     bld.and_wire(hinted_success, scalar_point_valid)
 }
 
