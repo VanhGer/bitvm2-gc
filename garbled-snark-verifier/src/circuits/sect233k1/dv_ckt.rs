@@ -495,7 +495,7 @@ mod test {
     use num_bigint::BigUint;
 
     #[test]
-    #[ignore] // ignore because of being long running
+    // #[ignore] // ignore because of being long running
     fn test_verify_over_mock_inputs() {
         let (mut bld, index_info) = compile_verifier();
 
@@ -559,6 +559,7 @@ mod test {
         let stats = bld.gate_counts();
         println!("{stats}");
         println!("label_info {:?}", index_info);
+        println!("number of wires: {:?}", bld.next_wire());
 
         let passed_val = evaluate_verifier(&mut bld, witness, index_info.output_index);
         assert!(passed_val, "verification failed");

@@ -105,6 +105,7 @@ mod test {
 
         let (bld, info) = compile_verifier();
         let wires_bits = bld.eval_gates(&witness.to_bits());
+        println!("number of wires: {}", wires_bits.len());
 
         let output_value = wires_bits[info.output_index];
         println!("output_value: {}", output_value);
