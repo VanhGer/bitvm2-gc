@@ -125,6 +125,10 @@ impl Fq {
         }).collect())
     }
 
+    fn equal_constant<T: CircuitTrait> (bld: &mut T, a: &[usize], b: ark_bn254::Fq) -> usize {
+        U254::equal_constant(bld, a, &BigUint::from(b))
+    }
+
     pub fn from_montgomery_wires<T: CircuitTrait>(bld: &mut T, fq: Fq) -> ark_bn254::Fq {
         Self::from_montgomery(Self::from_wires(bld, fq))
     }
@@ -307,7 +311,7 @@ impl Fq {
         for _ in 0..Self::N_BITS {
             let updated_s = Self::half(bld, &s);
             let updated_even_part = Self::half(bld, &even_part);
-            let selector = Self::equal_constant_fq(bld, &even_part, ark_bn254::Fq::ONE);
+            let selector = Self::equal_constant(bld, &even_part, ark_bn254::Fq::ONE);
             s = U254::select(bld, &s, &updated_s, selector);
             even_part = U254::select(bld, &even_part, &updated_even_part, selector);
         }
@@ -316,7 +320,7 @@ impl Fq {
         for _ in 0..2 * Self::N_BITS {
             let updated_s = Self::half(bld, &s);
             let updated_k = Fq::add_constant(bld, &k, ark_bn254::Fq::from(-1));
-            let selector = Self::equal_constant_fq(bld, &k, ark_bn254::Fq::ZERO);
+            let selector = Self::equal_constant(bld, &k, ark_bn254::Fq::ZERO);
             s = U254::select(bld, &s, &updated_s, selector);
             k = U254::select(bld, &k, &updated_k, selector);
         }

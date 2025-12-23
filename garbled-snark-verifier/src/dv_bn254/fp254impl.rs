@@ -58,10 +58,6 @@ pub trait Fp254Impl: Sized {
         U254::equal(bld, a, b)
     }
 
-    fn equal_constant_fq<T: CircuitTrait> (bld: &mut T, a: &[usize], b: ark_bn254::Fq) -> usize {
-        U254::equal_constant(bld, a, &BigUint::from(b))
-    }
-
     fn equal_zero<T: CircuitTrait> (bld: &mut T, a: &[usize]) -> usize {
         U254::equal_constant(bld, a, &BigUint::ZERO)
     }
