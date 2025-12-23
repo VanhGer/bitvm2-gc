@@ -361,17 +361,38 @@ pub(crate) fn verify<T: CircuitTrait>(
     public_inputs: PublicInputs,
     secrets: Trapdoor,
 ) -> usize {
+    let one_wire = bld.one();
+    let fr_modulus = const_mod_n(bld);
+
+    // points
     let (proof_commit_p, is_proof_commit_p_on_curve) =
         emit_affine_point_is_on_curve(bld, &proof.commit_p);
     let (proof_kzg_k, is_proof_kzg_k_on_curve) = emit_affine_point_is_on_curve(bld, &proof.kzg_k);
+    let decoded_points_valid = bld.and_wire(is_proof_commit_p_on_curve, is_proof_kzg_k_on_curve); // both valid
 
-    let one_wire = bld.one();
-    let fr_modulus = const_mod_n(bld);
+    // proof a0, b0
     let proof_a0_invalid = ge_unsigned(bld, &proof.a0, &fr_modulus); // a0 should be less than modulus
     let proof_b0_invalid = ge_unsigned(bld, &proof.b0, &fr_modulus);
-    let proof_scalars_invalid = bld.or_wire(proof_a0_invalid, proof_b0_invalid); // either invalid
-    let proof_scalars_valid = bld.xor_wire(proof_scalars_invalid, one_wire); // both scalars valid
-    let decoded_points_valid = bld.and_wire(is_proof_commit_p_on_curve, is_proof_kzg_k_on_curve); // both points valid
+    let a0_b0_invalid = bld.or_wire(proof_a0_invalid, proof_b0_invalid); // either invalid
+
+    // public inputs
+    let mut proof_pubinp_invalid = ge_unsigned(bld, &public_inputs.public_inputs[0], &fr_modulus);
+    for i in 1..public_inputs.public_inputs.len() {
+        let pubinp_invalid = ge_unsigned(bld, &public_inputs.public_inputs[i], &fr_modulus);
+        proof_pubinp_invalid = bld.or_wire(proof_pubinp_invalid, pubinp_invalid);
+    }
+
+    // trapdoor
+    let proof_tau_invalid = ge_unsigned(bld, &secrets.tau, &fr_modulus);
+    let proof_delta_invalid = ge_unsigned(bld, &secrets.delta, &fr_modulus);
+    let proof_epsilon_invalid = ge_unsigned(bld, &secrets.epsilon, &fr_modulus);
+    let tau_delta_invalid = bld.or_wire(proof_tau_invalid, proof_delta_invalid);
+    let trapdoor_invalid = bld.or_wire(tau_delta_invalid, proof_epsilon_invalid);
+
+    let a0_b0_pubinp_invalid =
+        bld.or_wire(a0_b0_invalid, proof_pubinp_invalid); // either a0, b0, pubinp invalid
+    let proof_scalars_invalid = bld.or_wire(a0_b0_pubinp_invalid, trapdoor_invalid);
+    let proof_scalars_valid = bld.xor_wire(proof_scalars_invalid, one_wire); // all valid
 
     // decompose
     let two_to_156 = two_to_156(bld);
@@ -382,8 +403,6 @@ pub(crate) fn verify<T: CircuitTrait>(
     let x1x2_invalid = bld.or_wire(proof_x1_invalid, proof_x2_invalid); // either x1, x2 invalid
     let decompose_invalid = bld.or_wire(x1x2_invalid, proof_z_invalid); // either x1, x2, z invalid
     let decompose_valid = bld.xor_wire(decompose_invalid, one_wire); // all valid
-
-    let proof_scalars_valid = bld.and_wire(proof_scalars_valid, decompose_valid);
 
     let fs_challenge_alpha =
         get_fs_challenge(bld, proof.commit_p, public_inputs.public_inputs.clone(), vec![], vec![]);
@@ -476,7 +495,7 @@ mod test {
     use num_bigint::BigUint;
 
     #[test]
-    #[ignore] // ignore because of being long running
+    // #[ignore] // ignore because of being long running
     fn test_verify_over_mock_inputs() {
         let (mut bld, index_info) = compile_verifier();
 
@@ -540,6 +559,7 @@ mod test {
         let stats = bld.gate_counts();
         println!("{stats}");
         println!("label_info {:?}", index_info);
+        println!("number of wires: {:?}", bld.next_wire());
 
         let passed_val = evaluate_verifier(&mut bld, witness, index_info.output_index);
         assert!(passed_val, "verification failed");

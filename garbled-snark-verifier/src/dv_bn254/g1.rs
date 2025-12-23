@@ -9,6 +9,7 @@ use ark_ec::PrimeGroup;
 use ark_ec::short_weierstrass::SWCurveConfig;
 use crate::circuits::sect233k1::builder::CircuitTrait;
 use crate::dv_bn254::basic::{not, selector};
+use crate::dv_bn254::bigint::U254;
 use crate::dv_bn254::fq::FQ_LEN;
 
 #[derive(Debug, Clone)]
@@ -169,12 +170,28 @@ impl G1Projective {
 }
 
 impl G1Projective {
+    // Check if the point scalars are valid Fq elements
+    pub fn emit_point_scalar_valid<T: CircuitTrait>(
+        bld: &mut T,
+        p: &G1Projective,
+    ) -> usize {
+        let one_wire = bld.one();
+        let fq_modulus = U254::wires_set_from_number(bld, &Fq::modulus_as_biguint());
+        let x_invalid = Fq::ge_unsigned(bld, &p.x.0, &fq_modulus);
+        let y_invalid = Fq::ge_unsigned(bld, &p.y.0, &fq_modulus);
+        let z_invalid = Fq::ge_unsigned(bld, &p.z.0, &fq_modulus);
+        let xy_invalid = bld.or_wire(x_invalid, y_invalid);
+        let xyz_invalid = bld.or_wire(xy_invalid, z_invalid);
+        let valid = bld.xor_wire(xyz_invalid, one_wire);
+        valid
+    }
+
     pub fn emit_projective_montgomery_point_is_on_curve<T: CircuitTrait>(
         bld: &mut T,
         p: &G1Projective,
     ) -> usize {
         // Y^2 = X^3 + b
-        let affine_p = projective_to_affine_montgomery(bld, &p);
+        let (affine_p, is_valid) = projective_to_affine_montgomery(bld, &p);
 
         let y2 = Fq::square_montgomery(bld, &affine_p.y.0);
         // let lhs = Fq::mul_by_constant_montgomery(bld, &y2, Fq::from_montgomery(ark_bn254::Fq::from(Fq::montgomery_r_as_biguint())));
@@ -182,7 +199,8 @@ impl G1Projective {
         let x3 = Fq::mul_montgomery(bld, &affine_p.x.0, &x2);
         let x3b = Fq::add_constant(bld, &x3, Fq::as_montgomery(ark_bn254::g1::Config::COEFF_B));
         // let rhs = Fq::add_constant(bld, &x3, ark_bn254::Fq::from(Fq::b_mul_as_biguint()));
-        Fq::equal(bld, &y2, &x3b)
+        let eq = Fq::equal(bld, &y2, &x3b);
+        bld.and_wire(eq, is_valid)
     }
 
     // http://koclab.cs.ucsb.edu/teaching/ccs130h/2018/09projective.pdf
@@ -378,18 +396,20 @@ pub struct G1Affine {
 }
 pub const G1_AFFINE_LEN: usize = 2 * FQ_LEN;
 
-pub fn projective_to_affine_montgomery<T: CircuitTrait>(bld: &mut T, p_point: &G1Projective) -> G1Affine {
-
-    let z_inverse = Fq::inverse_montgomery(bld, &p_point.z.0);
+pub fn projective_to_affine_montgomery<T: CircuitTrait>(bld: &mut T, p_point: &G1Projective) -> (G1Affine, usize) {
+    let (z_inverse, is_valid) = Fq::inverse_montgomery(bld, &p_point.z.0);
     let z_inverse_square = Fq::square_montgomery(bld, &z_inverse);
     let z_inverse_cube = Fq::mul_montgomery(bld, &z_inverse, &z_inverse_square);
     let new_x = Fq::mul_montgomery(bld, &p_point.x.0, &z_inverse_square);
     let new_y = Fq::mul_montgomery(bld, &p_point.y.0, &z_inverse_cube);
 
-    G1Affine {
-        x: Fq(new_x.try_into().unwrap()),
-        y: Fq(new_y.try_into().unwrap()),
-    }
+    (
+        G1Affine {
+            x: Fq(new_x.try_into().unwrap()),
+            y: Fq(new_y.try_into().unwrap()),
+        },
+        is_valid,
+    )
 }
 
 #[cfg(test)]
@@ -598,7 +618,7 @@ mod tests {
         let mut bld = CircuitAdapter::default();
         let point = G1Projective::wires(&mut bld);
         let witness =  G1Projective::to_bits(mont_pp);
-        let output_wires = projective_to_affine_montgomery(&mut bld, &point);
+        let (output_wires, is_valid) = projective_to_affine_montgomery(&mut bld, &point);
 
         let stats = bld.gate_counts();
         println!("{stats}");
@@ -606,6 +626,7 @@ mod tests {
         let wires = bld.eval_gates(&witness);
         let affine_x: Vec<bool> = output_wires.x.0.iter().map(|id| wires[*id]).collect();
         let affine_y: Vec<bool> = output_wires.y.0.iter().map(|id| wires[*id]).collect();
+        let valid_bit = wires[is_valid];
 
         let affine_x_value = Fq::from_bits(affine_x);
         let affine_y_value = Fq::from_bits(affine_y);
@@ -614,6 +635,7 @@ mod tests {
 
         assert_eq!(x, p_affine.x);
         assert_eq!(y, p_affine.y);
+        assert!(valid_bit);
     }
 
     #[test]

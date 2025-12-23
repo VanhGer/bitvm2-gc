@@ -125,6 +125,10 @@ impl Fq {
         }).collect())
     }
 
+    fn equal_constant<T: CircuitTrait> (bld: &mut T, a: &[usize], b: ark_bn254::Fq) -> usize {
+        U254::equal_constant(bld, a, &BigUint::from(b))
+    }
+
     pub fn from_montgomery_wires<T: CircuitTrait>(bld: &mut T, fq: Fq) -> ark_bn254::Fq {
         Self::from_montgomery(Self::from_wires(bld, fq))
     }
@@ -148,8 +152,28 @@ impl Fq {
         U254::select(bld, &wires_1, &wires_2, s)
     }
 
-    pub fn inverse<T: CircuitTrait>(bld: &mut T, a: &[usize]) -> Vec<usize> {
+    fn mul_by_constant_montgomery<T: CircuitTrait>(bld: &mut T, a: &[usize], b: ark_bn254::Fq) -> Vec<usize> {
         assert_eq!(a.len(), Self::N_BITS);
+
+        if b == ark_bn254::Fq::ZERO {
+            return Fq::wires_set(bld, ark_bn254::Fq::ZERO).0.to_vec();
+        }
+
+        if b == Fq::as_montgomery(ark_bn254::Fq::ONE) {
+            return a.to_vec();
+        }
+
+        let mul_circuit = U254::mul_by_constant(bld, a, b.into());
+        let reduction_circuit = Self::montgomery_reduce(bld, &mul_circuit);
+        reduction_circuit
+    }
+
+    pub fn inverse<T: CircuitTrait>(bld: &mut T, a: &[usize]) -> (Vec<usize>, usize) {
+        assert_eq!(a.len(), Self::N_BITS);
+        // check if a is zero
+        let is_zero = Self::equal_zero(bld, a);
+        let input_valid = not(bld, is_zero);
+
         let wires_1 = U254::odd_part(bld, a);
         let odd_part = wires_1.0;
         let mut even_part = wires_1.1;
@@ -300,19 +324,19 @@ impl Fq {
             s = U254::select(bld, &s, &updated_s, selector);
             k = U254::select(bld, &k, &updated_k, selector);
         }
-        s
+        (s, input_valid)
     }
 
-    pub fn inverse_montgomery<T: CircuitTrait>(bld: &mut T, a: &[usize]) -> Vec<usize> {
-        let b = Self::inverse(bld, a);
-        let result = Self::mul_by_fq_constant_montgomery(
+    pub fn inverse_montgomery<T: CircuitTrait>(bld: &mut T, a: &[usize]) -> (Vec<usize>, usize) {
+        let (b, is_valid_input) = Self::inverse(bld, a);
+        let result = Self::mul_by_constant_montgomery(
             bld,
             &b,
             ark_bn254::Fq::from(Fq::montgomery_r_as_biguint()).square()
                 * ark_bn254::Fq::from(Fq::montgomery_r_as_biguint()),
         );
 
-        result
+        (result, is_valid_input)
     }
 }
 
@@ -356,12 +380,14 @@ mod tests {
 
         let a_ref = Fq::wires(&mut bld);
 
-        let out = Fq::inverse_montgomery(&mut bld, &a_ref.0);
+        let (out, is_valid) = Fq::inverse_montgomery(&mut bld, &a_ref.0);
         let witness = Fq::to_bits(mont_a);
         let wires = bld.eval_gates(&witness);
 
         let inv_a_bits: Vec<bool> = out.iter().map(|id| wires[*id]).collect();
         let c = Fq::from_bits(inv_a_bits);
+        let is_valid_bit = wires[is_valid];
         assert_eq!(c, Fq::as_montgomery(a.inverse().unwrap()));
+        assert!(is_valid_bit);
     }
 }
