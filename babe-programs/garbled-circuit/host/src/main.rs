@@ -13,7 +13,7 @@ use garbled_snark_verifier::dv_bn254::dv_snark::{dv_snark_verifier_bench_circuit
 use garbled_snark_verifier::{bag::Circuit, dv_bn254::dv_ref::VerifierPayloadRef};
 use garbled_snark_verifier::core::utils::reset_gid;
 use garbled_snark_verifier::dv_bn254::fq::Fq;
-use verifiable_circuit_babe::gc::compile_babe_gc;
+use verifiable_circuit_babe::gc::compile_dsgc;
 use crate::utils::{gen_sub_circuits, SUB_CIRCUIT_MAX_GATES, SUB_INPUT_GATES_PARTS};
 
 /// The ELF we want to execute inside the zkVM.
@@ -38,7 +38,7 @@ fn custom_babe_garbled_circuit() -> Circuit {
     // build circuit
     let start = Instant::now();
     reset_gid();
-    let (bld, output_indices) = compile_babe_gc(g);
+    let (bld, output_indices) = compile_dsgc(g);
     let mut circuit = bld.build(&witness);
     let elapsed = start.elapsed();
     info!(step = "Gen circuit", elapsed = ?elapsed);
