@@ -8,25 +8,30 @@ use garbled_snark_verifier::dv_bn254::g1::G1Projective as GcG1Projective;
 
 use crate::dre::{L, N, U_BAR_SIZE, R_PD_SIZE};
 
+const WINDOW_BITS: usize = 4;
+const WINDOW_COUNT: usize = (Fr::N_BITS + WINDOW_BITS - 1) / WINDOW_BITS;
+const WINDOW_ENTRIES: usize = 1 << WINDOW_BITS;
+const PRECOMP_TABLE_BITS: usize = WINDOW_COUNT * WINDOW_ENTRIES * 2 * N;
+
 /// Compile the BABE circuit structure without fixing witness values.
 ///
-/// Input wire allocation order (each 254 bits, LSB-first, normal form):
-///   [0..N,..2N)       base_x/base_y — coordinates of the scalar-mul base point
-///   [2N..3N)     pi_x     — x-coordinate of the proof point π
-///   [3N..4N)     pi_y     — y-coordinate of π
-///   [4N..5N)     x_d      — scalar (Fr element)
+/// Input wire allocation order:
+///   [0..PRECOMP_TABLE_BITS)      precomputed table for P_D,
+///                                64 windows × 16 affine points in Montgomery form
+///   [..+N)                       pi_x — x-coordinate of the proof point π
+///   [..+N)                       pi_y — y-coordinate of π
+///   [..+N)                       x_d  — scalar (Fr element)
 pub fn compile_dsgc(g: G1Affine) -> (CircuitAdapter, Vec<usize>) {
     let mut bld = CircuitAdapter::default();
-    // base input wires — allocated before π so evaluator can supply them first
-    let base_x = Fq::wires(&mut bld);
-    let base_y = Fq::wires(&mut bld);
+    let mut table_wires = Vec::with_capacity(PRECOMP_TABLE_BITS);
+    for _ in 0..(WINDOW_COUNT * WINDOW_ENTRIES * 2) {
+        table_wires.extend(Fq::wires(&mut bld).0);
+    }
     // π input wires
     let pi_x = Fq::wires(&mut bld);
     let pi_y = Fq::wires(&mut bld);
     let x_d = Fr::wires(&mut bld);
-    let output_indices = emit_dsgc(
-        &mut bld, &base_x.0, &base_y.0, &pi_x.0, &pi_y.0, &x_d.0, g,
-    );
+    let output_indices = emit_dsgc(&mut bld, &table_wires, &pi_x.0, &pi_y.0, &x_d.0, g);
     (bld, output_indices)
 }
 
@@ -35,13 +40,14 @@ pub fn compile_dsgc(g: G1Affine) -> (CircuitAdapter, Vec<usize>) {
 ///   [U_BAR_SIZE..L)  (X,Y,Z) of x_d·P_D — 3·N bits, projective normal form
 fn emit_dsgc(
     bld: &mut CircuitAdapter,
-    base_x: &[usize],
-    base_y: &[usize],
+    table_wires: &[usize],
     pi_x: &[usize],
     pi_y: &[usize],
     x_d: &[usize],
     g: G1Affine,
 ) -> Vec<usize> {
+    assert_eq!(table_wires.len(), PRECOMP_TABLE_BITS);
+
     // R² mod p — multiply by this to convert normal → Montgomery form
     let r_sq = Fq::as_montgomery(Fq::as_montgomery(ark_bn254::Fq::from(1u64)));
 
@@ -79,21 +85,8 @@ fn emit_dsgc(
         .map(|k| selector(bld, pi_u_bar[k], g_u_bar[k], on_curve))
         .collect();
 
-    // ── x_d · P_D subcircuit (variable-base, 4-bit window) ───────────────────
-    // pd_x/pd_y are garbler-private variable wires; convert affine → Montgomery projective.
-    let pd_x_m = Fq::mul_by_constant_montgomery(bld, base_x, r_sq); // pd_x · R
-    let pd_y_m = Fq::mul_by_constant_montgomery(bld, base_y, r_sq); // pd_y · R
-    // z = 1 in affine; z in Montgomery = R mod p (constant)
-    let z_mont_val = Fq::as_montgomery(ark_bn254::Fq::from(1u64));
-    let z_bits = Fq::to_bits(z_mont_val);
-    let pd_z_m: Vec<usize> = z_bits.iter().take(N).map(|&b| if b { bld.one() } else { bld.zero() }).collect();
-
-    let mut pd_proj_m: Vec<usize> = Vec::with_capacity(3 * N);
-    pd_proj_m.extend(&pd_x_m);
-    pd_proj_m.extend(&pd_y_m);
-    pd_proj_m.extend(&pd_z_m);
-
-    let prod_proj_m = GcG1Projective::scalar_mul_window4_circuit(bld, x_d, &pd_proj_m);
+    // ── x_d · P_D subcircuit (garbler-private windowed precomputed table) ────
+    let prod_proj_m = GcG1Projective::scalar_mul_private_table_circuit(bld, x_d, table_wires);
 
     // Normalize each coordinate: (X·R, Y·R, Z·R) → (X, Y, Z)
     let x_out = Fq::mul_by_constant_montgomery(bld, &prod_proj_m[..N],      ark_bn254::Fq::from(1u64));
@@ -146,7 +139,7 @@ pub fn gc_ciphertexts_commit(ciphertexts: &[Option<garbled_snark_verifier::bag::
 mod tests {
     use super::*;
     use ark_ec::CurveGroup;
-    use ark_ff::{UniformRand, Zero};
+    use ark_ff::{AdditiveGroup, UniformRand, Zero};
     use garbled_snark_verifier::bag::{Circuit, S};
     use garbled_snark_verifier::core::utils::reset_gid;
     use crate::dre::matrices::u_bar_vec;
@@ -156,11 +149,30 @@ mod tests {
         ark_bn254::G1Projective::rand(&mut rng).into_affine()
     }
 
-    /// Build a full witness: pi_x, pi_y, pd_x, pd_y, x_d (each N bits, LSB-first).
+    fn build_pd_table_bits(pd: &G1Affine) -> Vec<bool> {
+        let mut bits = Vec::with_capacity(PRECOMP_TABLE_BITS);
+        let mut window_base = ark_bn254::G1Projective::from(pd.clone());
+
+        for _ in 0..WINDOW_COUNT {
+            let mut multiple = ark_bn254::G1Projective::zero();
+            for _ in 0..WINDOW_ENTRIES {
+                let aff = multiple.clone().into_affine();
+                bits.extend(Fq::to_bits(Fq::as_montgomery(aff.x)));
+                bits.extend(Fq::to_bits(Fq::as_montgomery(aff.y)));
+                multiple += window_base;
+            }
+
+            for _ in 0..WINDOW_BITS {
+                window_base.double_in_place();
+            }
+        }
+        bits
+    }
+
+    /// Build a full witness: precomputed window table for P_D, pi_x, pi_y, x_d.
     fn build_witness(pi: &G1Affine, pd: &G1Affine, x_d: ark_bn254::Fr) -> Vec<bool> {
-        Fq::to_bits(pd.x)
+        build_pd_table_bits(pd)
             .into_iter()
-            .chain(Fq::to_bits(pd.y))
             .chain(Fq::to_bits(pi.x))
             .chain(Fq::to_bits(pi.y))
             .chain(Fr::to_bits(x_d))
@@ -318,8 +330,8 @@ mod tests {
         let (bld, output_indices) = compile_dsgc(g);
         let mut circuit = bld.build(&[]);
 
-        // 2. Generate a new set of labels — one label0 per input wire (5·N wires)
-        let encoding_keys: Vec<S> = (0..5 * N).map(|_| S::random()).collect();
+        // 2. Generate a new set of labels — one label0 per input wire.
+        let encoding_keys: Vec<S> = (0..(PRECOMP_TABLE_BITS + 3 * N)).map(|_| S::random()).collect();
         for (i, &key) in encoding_keys.iter().enumerate() {
             circuit.0[2 + i].borrow_mut().label = Some(key);
         }
@@ -435,8 +447,8 @@ mod tests {
         let (bld, output_indices) = compile_dsgc(g);
         let mut circuit = bld.build(&[]);
 
-        // Encoding keys for all 5·N input wires
-        let encoding_keys: Vec<S> = (0..5 * N).map(|_| S::random()).collect();
+        // Encoding keys for all input wires
+        let encoding_keys: Vec<S> = (0..(PRECOMP_TABLE_BITS + 3 * N)).map(|_| S::random()).collect();
         for (i, &key) in encoding_keys.iter().enumerate() {
             circuit.0[2 + i].borrow_mut().label = Some(key);
         }
