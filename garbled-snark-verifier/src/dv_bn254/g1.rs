@@ -5,7 +5,7 @@ use crate::{
 };
 use crate::circuits::bn254::utils::create_rng;
 use ark_ff::{AdditiveGroup, UniformRand};
-use ark_ec::PrimeGroup;
+use ark_ec::{CurveGroup, PrimeGroup};
 use ark_ec::short_weierstrass::SWCurveConfig;
 use crate::circuits::sect233k1::builder::CircuitTrait;
 use crate::dv_bn254::basic::{not, selector};
@@ -354,6 +354,83 @@ impl G1Projective {
             }
         }
         res
+    }
+
+    /// Variable-base scalar multiplication using a 4-bit window (Horner / left-to-right).
+    ///
+    /// Precomputes table T[0..16] in-circuit (T[0]=inf, T[1]=P, …, T[15]=15P) then processes
+    /// 64 windows of 4 bits MSB-first: 4 doublings + 16-way mux + 1 full add per window.
+    ///
+    /// `scalar` — 254 wire indices, raw (non-Montgomery) bits, **LSB-first**.
+    /// `point`  — 762 wire indices, Montgomery projective (X·R : Y·R : Z·R).
+    /// Returns projective (X·R : Y·R : Z·R).
+    pub fn scalar_mul_window4_circuit<T: CircuitTrait>(
+        bld: &mut T,
+        scalar: &[usize],
+        point: &[usize],
+    ) -> Vec<usize> {
+        assert_eq!(scalar.len(), Fr::N_BITS);
+        assert_eq!(point.len(), G1_PROJECTIVE_LEN);
+
+        // Build table T[0..16]: T[0]=inf, T[1]=P, T[2]=2P, …, T[15]=15P
+        let inf_wires = G1Projective::wires_set(
+            bld,
+            G1Projective::as_montgomery(ark_bn254::G1Projective::default()),
+        )
+        .to_vec_wires();
+        let mut table: Vec<Vec<usize>> = Vec::with_capacity(16);
+        table.push(inf_wires);           // T[0] = inf
+        table.push(point.to_vec());      // T[1] = P
+        table.push(Self::double_montgomery(bld, &table[1])); // T[2] = 2P
+        table.push(Self::add_montgomery(bld, &table[2], &table[1])); // T[3] = 3P
+        table.push(Self::double_montgomery(bld, &table[2])); // T[4] = 4P
+        for i in 1..=3 {
+            let t = Self::add_montgomery(bld, &table[4], &table[i]);
+            table.push(t); // T[5..7]
+        }
+        table.push(Self::double_montgomery(bld, &table[4])); // T[8] = 8P
+        for i in 1..=7 {
+            let t = Self::add_montgomery(bld, &table[8], &table[i]);
+            table.push(t); // T[9..15]
+        }
+        assert_eq!(table.len(), 16);
+
+        // Split table into per-coordinate slices for multiplexer
+        let tab_x: Vec<Vec<usize>> = table.iter().map(|t| t[..FQ_LEN].to_vec()).collect();
+        let tab_y: Vec<Vec<usize>> = table.iter().map(|t| t[FQ_LEN..2 * FQ_LEN].to_vec()).collect();
+        let tab_z: Vec<Vec<usize>> = table.iter().map(|t| t[2 * FQ_LEN..].to_vec()).collect();
+
+        // Accumulator starts at infinity
+        let mut acc = G1Projective::wires_set(
+            bld,
+            G1Projective::as_montgomery(ark_bn254::G1Projective::default()),
+        )
+        .to_vec_wires();
+
+        // scalar is LSB-first; window w covers bits [4w..4w+3], i.e. the MSB window is w=63.
+        // We iterate MSB-first (Horner): acc = 16·acc + T[window_bits]
+        let zero_wire = bld.zero();
+        let bit = |i: usize| -> usize {
+            if i < Fr::N_BITS { scalar[i] } else { zero_wire }
+        };
+
+        for w in (0..64usize).rev() {
+            // 4 doublings (skip for first window)
+            if w != 63 {
+                for _ in 0..4 {
+                    acc = Self::double_montgomery(bld, &acc);
+                }
+            }
+            // Select table entry by the 4-bit window (bits are still LSB-first per window)
+            let base = w * 4;
+            let sel = [bit(base), bit(base + 1), bit(base + 2), bit(base + 3)];
+            let mut entry = Fq::multiplexer(bld, &tab_x, &sel, 4);
+            entry.extend(Fq::multiplexer(bld, &tab_y, &sel, 4));
+            entry.extend(Fq::multiplexer(bld, &tab_z, &sel, 4));
+
+            acc = Self::add_montgomery(bld, &acc, &entry);
+        }
+        acc
     }
 
     pub fn msm_montgomery_circuit<T: CircuitTrait>(

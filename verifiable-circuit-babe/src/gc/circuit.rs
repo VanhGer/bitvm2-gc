@@ -11,21 +11,21 @@ use crate::dre::{L, N, U_BAR_SIZE, R_PD_SIZE};
 /// Compile the BABE circuit structure without fixing witness values.
 ///
 /// Input wire allocation order (each 254 bits, LSB-first, normal form):
-///   [0..N,..2N)       const_x/const_y — coordinates of the scalar-mul base point
+///   [0..N,..2N)       base_x/base_y — coordinates of the scalar-mul base point
 ///   [2N..3N)     pi_x     — x-coordinate of the proof point π
 ///   [3N..4N)     pi_y     — y-coordinate of π
 ///   [4N..5N)     x_d      — scalar (Fr element)
 pub fn compile_dsgc(g: G1Affine) -> (CircuitAdapter, Vec<usize>) {
     let mut bld = CircuitAdapter::default();
     // base input wires — allocated before π so evaluator can supply them first
-    let const_x = Fq::wires(&mut bld);
-    let const_y = Fq::wires(&mut bld);
+    let base_x = Fq::wires(&mut bld);
+    let base_y = Fq::wires(&mut bld);
     // π input wires
     let pi_x = Fq::wires(&mut bld);
     let pi_y = Fq::wires(&mut bld);
     let x_d = Fr::wires(&mut bld);
     let output_indices = emit_dsgc(
-        &mut bld, &const_x.0, &const_y.0, &pi_x.0, &pi_y.0, &x_d.0, g,
+        &mut bld, &base_x.0, &base_y.0, &pi_x.0, &pi_y.0, &x_d.0, g,
     );
     (bld, output_indices)
 }
@@ -35,8 +35,8 @@ pub fn compile_dsgc(g: G1Affine) -> (CircuitAdapter, Vec<usize>) {
 ///   [U_BAR_SIZE..L)  (X,Y,Z) of x_d·P_D — 3·N bits, projective normal form
 fn emit_dsgc(
     bld: &mut CircuitAdapter,
-    const_x: &[usize],
-    const_y: &[usize],
+    base_x: &[usize],
+    base_y: &[usize],
     pi_x: &[usize],
     pi_y: &[usize],
     x_d: &[usize],
@@ -79,25 +79,26 @@ fn emit_dsgc(
         .map(|k| selector(bld, pi_u_bar[k], g_u_bar[k], on_curve))
         .collect();
 
-    // ── x_d · base subcircuit ─────────────────────────────────────────────────
+    // ── x_d · P_D subcircuit (variable-base, 4-bit window) ───────────────────
+    // pd_x/pd_y are garbler-private variable wires; convert affine → Montgomery projective.
+    let pd_x_m = Fq::mul_by_constant_montgomery(bld, base_x, r_sq); // pd_x · R
+    let pd_y_m = Fq::mul_by_constant_montgomery(bld, base_y, r_sq); // pd_y · R
+    // z = 1 in affine; z in Montgomery = R mod p (constant)
+    let z_mont_val = Fq::as_montgomery(ark_bn254::Fq::from(1u64));
+    let z_bits = Fq::to_bits(z_mont_val);
+    let pd_z_m: Vec<usize> = z_bits.iter().take(N).map(|&b| if b { bld.one() } else { bld.zero() }).collect();
 
-    // Convert base coordinates to Montgomery form
-    let base_x = Fq::mul_by_constant_montgomery(bld, const_x, r_sq);
-    let base_y = Fq::mul_by_constant_montgomery(bld, const_y, r_sq);
-    let base_z = Fq::wires_set(bld, Fq::as_montgomery(ark_bn254::Fq::from(1u64))).0.to_vec();
+    let mut pd_proj_m: Vec<usize> = Vec::with_capacity(3 * N);
+    pd_proj_m.extend(&pd_x_m);
+    pd_proj_m.extend(&pd_y_m);
+    pd_proj_m.extend(&pd_z_m);
 
-    // Flat 762-wire projective point (X·R, Y·R, Z·R)
-    let mut base_wires = base_x;
-    base_wires.extend(base_y);
-    base_wires.extend(base_z);
-
-    // Double-and-add: scalar x_d (raw bits) × Montgomery projective point
-    let prod_proj_m = GcG1Projective::scalar_mul_montgomery_circuit(bld, x_d, &base_wires);
+    let prod_proj_m = GcG1Projective::scalar_mul_window4_circuit(bld, x_d, &pd_proj_m);
 
     // Normalize each coordinate: (X·R, Y·R, Z·R) → (X, Y, Z)
     let x_out = Fq::mul_by_constant_montgomery(bld, &prod_proj_m[..N],      ark_bn254::Fq::from(1u64));
-    let y_out = Fq::mul_by_constant_montgomery(bld, &prod_proj_m[N..2 * N],  ark_bn254::Fq::from(1u64));
-    let z_out = Fq::mul_by_constant_montgomery(bld, &prod_proj_m[2 * N..],   ark_bn254::Fq::from(1u64));
+    let y_out = Fq::mul_by_constant_montgomery(bld, &prod_proj_m[N..2 * N], ark_bn254::Fq::from(1u64));
+    let z_out = Fq::mul_by_constant_montgomery(bld, &prod_proj_m[2 * N..],  ark_bn254::Fq::from(1u64));
 
     output_indices.extend(x_out);
     output_indices.extend(y_out);
@@ -155,15 +156,11 @@ mod tests {
         ark_bn254::G1Projective::rand(&mut rng).into_affine()
     }
 
-    /// Build a full witness: const_x, const_y, pi_x, pi_y, x_d (each N bits, LSB-first).
-    fn build_witness(
-        const_point: &G1Affine,
-        pi: &G1Affine,
-        x_d: ark_bn254::Fr,
-    ) -> Vec<bool> {
-        Fq::to_bits(const_point.x)
+    /// Build a full witness: pi_x, pi_y, pd_x, pd_y, x_d (each N bits, LSB-first).
+    fn build_witness(pi: &G1Affine, pd: &G1Affine, x_d: ark_bn254::Fr) -> Vec<bool> {
+        Fq::to_bits(pd.x)
             .into_iter()
-            .chain(Fq::to_bits(const_point.y))
+            .chain(Fq::to_bits(pd.y))
             .chain(Fq::to_bits(pi.x))
             .chain(Fq::to_bits(pi.y))
             .chain(Fr::to_bits(x_d))
@@ -174,10 +171,10 @@ mod tests {
     fn test_babe_gc_on_curve() {
         let pi = random_g1_affine();
         let g  = random_g1_affine();
-        let const_point = random_g1_affine();
+        let pd = random_g1_affine();
         let x_d = ark_bn254::Fr::from(1u64);
 
-        let witness = build_witness(&const_point, &pi, x_d);
+        let witness = build_witness(&pi, &pd, x_d);
 
         reset_gid();
         let (bld, output_indices) = compile_dsgc(g);
@@ -228,13 +225,13 @@ mod tests {
     fn test_babe_gc_off_curve_falls_back_to_g() {
         let pi = random_g1_affine();
         let g  = random_g1_affine();
-        let const_point = random_g1_affine();
+        let pd = random_g1_affine();
         let x_d = ark_bn254::Fr::from(1u64);
 
         let bad_y = pi.y + ark_bn254::Fq::from(1u64);
         let mut off_pi = pi;
         off_pi.y = bad_y;
-        let witness = build_witness(&const_point, &off_pi, x_d);
+        let witness = build_witness(&off_pi, &pd, x_d);
 
         reset_gid();
         let (bld, output_indices) = compile_dsgc(g);
@@ -266,12 +263,12 @@ mod tests {
     #[test]
     fn test_babe_gc_xd_pd_output() {
         let mut rng = rand::thread_rng();
-        let g           = random_g1_affine();
-        let const_point = random_g1_affine();
-        let pi          = random_g1_affine();
-        let x_d         = ark_bn254::Fr::rand(&mut rng);
+        let g  = random_g1_affine();
+        let pd = random_g1_affine();
+        let pi = random_g1_affine();
+        let x_d = ark_bn254::Fr::rand(&mut rng);
 
-        let witness = build_witness(&const_point, &pi, x_d);
+        let witness = build_witness(&pi, &pd, x_d);
 
         reset_gid();
         let (bld, output_indices) = compile_dsgc(g);
@@ -288,12 +285,12 @@ mod tests {
         assert_eq!(output.len(), L);
 
         // Reconstruct projective point (X,Y,Z) in normal form from R_PD bits
-        let X = Fq::from_bits(output[U_BAR_SIZE..U_BAR_SIZE + N].to_vec());
-        let Y = Fq::from_bits(output[U_BAR_SIZE + N..U_BAR_SIZE + 2 * N].to_vec());
-        let Z = Fq::from_bits(output[U_BAR_SIZE + 2 * N..L].to_vec());
+        let x = Fq::from_bits(output[U_BAR_SIZE..U_BAR_SIZE + N].to_vec());
+        let y = Fq::from_bits(output[U_BAR_SIZE + N..U_BAR_SIZE + 2 * N].to_vec());
+        let z = Fq::from_bits(output[U_BAR_SIZE + 2 * N..L].to_vec());
 
-        let result_proj   = ark_bn254::G1Projective::new(X, Y, Z);
-        let expected_affine = (ark_bn254::G1Projective::from(const_point) * x_d).into_affine();
+        let result_proj     = ark_bn254::G1Projective::new(x, y, z);
+        let expected_affine = (ark_bn254::G1Projective::from(pd) * x_d).into_affine();
 
         assert_eq!(
             result_proj.into_affine(), expected_affine,
@@ -310,11 +307,11 @@ mod tests {
     #[cfg(feature = "garbled")]
     #[test]
     fn test_babe_gc_garbled_e2e() {
-        let mut rng     = rand::thread_rng();
-        let g           = random_g1_affine();
-        let const_point = random_g1_affine();
-        let pi          = random_g1_affine();
-        let x_d         = ark_bn254::Fr::rand(&mut rng);
+        let mut rng = rand::thread_rng();
+        let g  = random_g1_affine();
+        let pd = random_g1_affine();
+        let pi = random_g1_affine();
+        let x_d = ark_bn254::Fr::rand(&mut rng);
 
         // 1. Generate circuit
         reset_gid();
@@ -328,7 +325,7 @@ mod tests {
         }
 
         // 3. Derive input label values from concrete inputs
-        let witness = build_witness(&const_point, &pi, x_d);
+        let witness = build_witness(&pi, &pd, x_d);
 
         // 4. Evaluate garbled circuit
         circuit.set_witness_value(&witness);
@@ -366,12 +363,12 @@ mod tests {
             .collect();
         assert_eq!(pd_bits.len(), R_PD_SIZE);
 
-        let X = Fq::from_bits(pd_bits[..N].to_vec());
-        let Y = Fq::from_bits(pd_bits[N..2 * N].to_vec());
-        let Z = Fq::from_bits(pd_bits[2 * N..].to_vec());
+        let x = Fq::from_bits(pd_bits[..N].to_vec());
+        let y = Fq::from_bits(pd_bits[N..2 * N].to_vec());
+        let z = Fq::from_bits(pd_bits[2 * N..].to_vec());
 
-        let result_proj    = ark_bn254::G1Projective::new(X, Y, Z);
-        let expected_affine = (ark_bn254::G1Projective::from(const_point) * x_d).into_affine();
+        let result_proj     = ark_bn254::G1Projective::new(x, y, z);
+        let expected_affine = (ark_bn254::G1Projective::from(pd) * x_d).into_affine();
         assert_eq!(
             result_proj.into_affine(), expected_affine,
             "x_d · P_D projective output represents wrong affine point"
@@ -387,16 +384,16 @@ mod tests {
     #[cfg(feature = "garbled")]
     #[test]
     fn test_babe_gc_garbled_labels() {
-        let pi          = random_g1_affine();
-        let g           = random_g1_affine();
-        let const_point = random_g1_affine();
-        let x_d         = ark_bn254::Fr::from(1u64);
+        let pi  = random_g1_affine();
+        let g   = random_g1_affine();
+        let pd  = random_g1_affine();
+        let x_d = ark_bn254::Fr::from(1u64);
 
         reset_gid();
         let (bld, output_indices) = compile_dsgc(g);
         let mut circuit = bld.build(&vec![]);
 
-        let witness = build_witness(&const_point, &pi, x_d);
+        let witness = build_witness(&pi, &pd, x_d);
         circuit.set_witness_value(&witness);
         for gate in &mut circuit.1 {
             gate.evaluate();
@@ -430,9 +427,9 @@ mod tests {
     fn test_output_labels() {
         use garbled_snark_verifier::core::utils::NON_CAC_DELTA;
 
-        let g           = random_g1_affine();
-        let const_point = random_g1_affine();
-        let x_d         = ark_bn254::Fr::from(1u64);
+        let g   = random_g1_affine();
+        let pd  = random_g1_affine();
+        let x_d = ark_bn254::Fr::from(1u64);
 
         reset_gid();
         let (bld, output_indices) = compile_dsgc(g);
@@ -449,7 +446,7 @@ mod tests {
         let p1b = ark_bn254::G1Projective::rand(&mut rng).into_affine();
 
         let eval = |circuit: &mut Circuit, p: &ark_bn254::G1Affine| -> Vec<S> {
-            let witness = build_witness(&const_point, p, x_d);
+            let witness = build_witness(p, &pd, x_d);
 
             for wire in circuit.0.iter().skip(2) {
                 wire.borrow_mut().value = None;
