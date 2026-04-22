@@ -23,33 +23,52 @@ pub const DIGIT_TOTAL_BITS: usize = WINDOW_COUNT * DIGIT_BITS;
 /// Compile the DSGC circuit structure without fixing witness values.
 ///
 /// Input wire allocation order:
-///   [0..PRECOMP_TABLE_BITS)      signed-digit precomputed table for Base,
+///   [0..N)                       pi_x — x-coordinate of the proof point π
+///   [N..2·N)                     pi_y — y-coordinate of π
+///   [2·N..3·N)                   r·B_x — x-coordinate of blinding point, Montgomery form
+///   [3N..4·N)                     r·B_y — y-coordinate of blinding point, Montgomery form
+///   [4·N..4·N+PRECOMP_TABLE_BITS) signed-digit precomputed table for Base,
 ///                                WINDOW_COUNT windows × WINDOW_ENTRIES affine points
 ///                                (entry j = (j+1)·256^i·P), Montgomery form
-///   [..+N)                       pi_x — x-coordinate of the proof point π
-///   [..+N)                       pi_y — y-coordinate of π
 ///   [..+DIGIT_TOTAL_BITS)        x_d recoded into Booth digits, 9 bits per window
+///
 pub fn compile_dsgc(g: G1Affine) -> (CircuitAdapter, Vec<usize>) {
     let mut bld = CircuitAdapter::default();
-    let mut table_wires = Vec::with_capacity(PRECOMP_TABLE_BITS);
-    for _ in 0..(WINDOW_COUNT * WINDOW_ENTRIES * 2) {
-        table_wires.extend(Fq::wires(&mut bld).0);
-    }
-
-    // Signed-digit encoding of x_d (33 × 9 = 297 bits)
-    let digit_wires: Vec<usize> = (0..DIGIT_TOTAL_BITS).map(|_| bld.fresh_one()).collect();
 
     // π input wires
     let pi_x = Fq::wires(&mut bld);
     let pi_y = Fq::wires(&mut bld);
 
-    let output_indices = emit_dsgc(&mut bld, &table_wires, &digit_wires, &pi_x.0, &pi_y.0, g);
+    // r·B input wires — garbler-private, placed before table wires.
+    let rb_x = Fq::wires(&mut bld);
+    let rb_y = Fq::wires(&mut bld);
+    let mut table_wires = Vec::with_capacity(PRECOMP_TABLE_BITS);
+    for _ in 0..(WINDOW_COUNT * WINDOW_ENTRIES * 2) {
+        table_wires.extend(Fq::wires(&mut bld).0);
+    }
+    // Signed-digit encoding of x_d (33 × 9 = 297 bits)
+    let digit_wires: Vec<usize> = (0..DIGIT_TOTAL_BITS).map(|_| bld.fresh_one()).collect();
+
+
+    let output_indices = emit_dsgc(
+        &mut bld,
+        &table_wires,
+        &digit_wires,
+        &pi_x.0,
+        &pi_y.0,
+        g,
+        &rb_x.0,
+        &rb_y.0,
+    );
     (bld, output_indices)
 }
 
+/// Number of input bits contributed by the blinding point r·B (x and y, normal form).
+pub const R_B_BITS: usize = 2 * N;
+
 /// Output layout (total L = U_BAR_SIZE + R_PD_SIZE = 2033 bits):
 ///   [0..U_BAR_SIZE)  ū(π) or ū(g) — 1 + 5·N bits, LSB-first
-///   [U_BAR_SIZE..L)  (X,Y,Z) of x_d·P_D — 3·N bits, projective Montgomery form
+///   [U_BAR_SIZE..L)  (X,Y,Z) of x_d·P_D + r·B — 3·N bits, projective Montgomery form
 fn emit_dsgc(
     bld: &mut CircuitAdapter,
     table_wires: &[usize],
@@ -57,6 +76,8 @@ fn emit_dsgc(
     pi_x: &[usize],
     pi_y: &[usize],
     g: G1Affine,
+    rb_x_wires: &[usize],
+    rb_y_wires: &[usize],
 ) -> Vec<usize> {
     assert_eq!(table_wires.len(), PRECOMP_TABLE_BITS);
 
@@ -101,10 +122,16 @@ fn emit_dsgc(
     let prod_proj_m =
         GcG1Projective::scalar_mul_private_signed_table_circuit(bld, digits, table_wires);
 
+    // ── Blinding: add r·B (garbler-private affine, already in Montgomery form) ─
+    let mut rb_affine_m: Vec<usize> = rb_x_wires.to_vec();
+    rb_affine_m.extend_from_slice(rb_y_wires);
+    let blinded_proj_m =
+        GcG1Projective::add_mixed_montgomery_no_inf(bld, &prod_proj_m, &rb_affine_m);
+
     // Output stays in Montgomery form (X·R, Y·R, Z·R).
-    output_indices.extend_from_slice(&prod_proj_m[..N]);
-    output_indices.extend_from_slice(&prod_proj_m[N..2 * N]);
-    output_indices.extend_from_slice(&prod_proj_m[2 * N..]);
+    output_indices.extend_from_slice(&blinded_proj_m[..N]);
+    output_indices.extend_from_slice(&blinded_proj_m[N..2 * N]);
+    output_indices.extend_from_slice(&blinded_proj_m[2 * N..]);
     assert_eq!(output_indices.len(), L);
 
     output_indices
@@ -237,14 +264,17 @@ mod tests {
         bits
     }
 
-    /// Build a full witness: precomputed signed table for P_D, pi_x, pi_y, Booth-recoded x_d.
-    fn build_witness(pi: &G1Affine, base: &G1Affine, x_d: ark_bn254::Fr) -> Vec<bool> {
+    /// Build a full witness: r·B (garbler-private blinding point in Montgomery form),
+    /// precomputed signed table for P_D, Booth-recoded x_d, pi_x, pi_y.
+    fn build_witness(pi: &G1Affine, base: &G1Affine, x_d: ark_bn254::Fr, r_b: &G1Affine) -> Vec<bool> {
         let digits = booth_recode_w8(x_d);
-        build_base_table_bits(base)
-            .into_iter()
-            .chain(encode_signed_digits(&digits).into_iter())
-            .chain(Fq::to_bits(pi.x))
+
+        Fq::to_bits(pi.x).into_iter()
             .chain(Fq::to_bits(pi.y))
+            .chain(Fq::to_bits(Fq::as_montgomery(r_b.x)))
+            .chain(Fq::to_bits(Fq::as_montgomery(r_b.y)))
+            .chain(build_base_table_bits(base))
+            .chain(encode_signed_digits(&digits))
             .collect()
     }
 
@@ -253,9 +283,10 @@ mod tests {
         let pi = random_g1_affine();
         let g  = random_g1_affine();
         let base = random_g1_affine();
+        let r_b = random_g1_affine();
         let x_d = ark_bn254::Fr::from(1u64);
 
-        let witness = build_witness(&pi, &base, x_d);
+        let witness = build_witness(&pi, &base, x_d, &r_b);
 
         reset_gid();
         let (bld, output_indices) = compile_dsgc(g);
@@ -307,12 +338,13 @@ mod tests {
         let pi = random_g1_affine();
         let g  = random_g1_affine();
         let base = random_g1_affine();
+        let r_b = random_g1_affine();
         let x_d = ark_bn254::Fr::from(1u64);
 
         let bad_y = pi.y + ark_bn254::Fq::from(1u64);
         let mut off_pi = pi;
         off_pi.y = bad_y;
-        let witness = build_witness(&off_pi, &base, x_d);
+        let witness = build_witness(&off_pi, &base, x_d, &r_b);
 
         reset_gid();
         let (bld, output_indices) = compile_dsgc(g);
@@ -340,16 +372,17 @@ mod tests {
         }
     }
 
-    /// Plain (non-garbled) evaluation: verify x_d · P_D projective output.
+    /// Plain (non-garbled) evaluation: verify x_d · P_D + r·B projective output.
     #[test]
     fn test_babe_gc_xd_base_output() {
         let mut rng = rand::thread_rng();
         let g  = random_g1_affine();
         let base = random_g1_affine();
+        let r_b = random_g1_affine();
         let pi = random_g1_affine();
         let x_d = ark_bn254::Fr::rand(&mut rng);
 
-        let witness = build_witness(&pi, &base, x_d);
+        let witness = build_witness(&pi, &base, x_d, &r_b);
 
         reset_gid();
         let (bld, output_indices) = compile_dsgc(g);
@@ -370,12 +403,14 @@ mod tests {
         let y = Fq::from_montgomery(Fq::from_bits(output[U_BAR_SIZE + N..U_BAR_SIZE + 2 * N].to_vec()));
         let z = Fq::from_montgomery(Fq::from_bits(output[U_BAR_SIZE + 2 * N..L].to_vec()));
 
-        let result_proj     = ark_bn254::G1Projective::new(x, y, z);
-        let expected_affine = (ark_bn254::G1Projective::from(base) * x_d).into_affine();
+        let result_proj = ark_bn254::G1Projective::new(x, y, z);
+        let expected_affine = (ark_bn254::G1Projective::from(base) * x_d
+            + ark_bn254::G1Projective::from(r_b))
+        .into_affine();
 
         assert_eq!(
             result_proj.into_affine(), expected_affine,
-            "x_d · P_D projective output represents wrong affine point"
+            "x_d · P_D + r·B projective output represents wrong affine point"
         );
     }
 
@@ -391,6 +426,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let g  = random_g1_affine();
         let base = random_g1_affine();
+        let r_b = random_g1_affine();
         let pi = random_g1_affine();
         let x_d = ark_bn254::Fr::rand(&mut rng);
 
@@ -401,17 +437,18 @@ mod tests {
         let mut circuit = bld.build(&[]);
         println!("circuit generate time: {:?}", now.elapsed());
 
-
         // 2. Generate a new set of labels — one label0 per input wire.
+        // Input wires: R_B_BITS (r·B) + PRECOMP_TABLE_BITS (table) + DIGIT_TOTAL_BITS (x_d) + 2·N (π)
         let now = Instant::now();
-        let encoding_keys: Vec<S> = (0..(PRECOMP_TABLE_BITS + 3 * N)).map(|_| S::random()).collect();
+        let total_input_wires = R_B_BITS + PRECOMP_TABLE_BITS + DIGIT_TOTAL_BITS + 2 * N;
+        let encoding_keys: Vec<S> = (0..total_input_wires).map(|_| S::random()).collect();
         for (i, &key) in encoding_keys.iter().enumerate() {
             circuit.0[2 + i].borrow_mut().label = Some(key);
         }
         println!("encoding time: {:?}", now.elapsed());
 
         // 3. Derive input label values from concrete inputs
-        let witness = build_witness(&pi, &base, x_d);
+        let witness = build_witness(&pi, &base, x_d, &r_b);
 
         // 4. Evaluate garbled circuit
         let now = Instant::now();
@@ -461,7 +498,8 @@ mod tests {
         let z = Fq::from_montgomery(Fq::from_bits(rpd_bits[2 * N..].to_vec()));
 
         let result_proj     = ark_bn254::G1Projective::new(x, y, z);
-        let expected_affine = (ark_bn254::G1Projective::from(base) * x_d).into_affine();
+        let expected_affine = ark_bn254::G1Projective::from(base) * x_d
+            + ark_bn254::G1Projective::from(r_b);
         assert_eq!(
             result_proj.into_affine(), expected_affine,
             "x_d · Base projective output represents wrong affine point"
