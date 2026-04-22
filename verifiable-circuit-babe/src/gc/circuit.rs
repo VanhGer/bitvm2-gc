@@ -6,44 +6,56 @@ use garbled_snark_verifier::dv_bn254::fp254impl::Fp254Impl;
 use garbled_snark_verifier::dv_bn254::{fq::Fq, fr::Fr};
 use garbled_snark_verifier::dv_bn254::g1::G1Projective as GcG1Projective;
 
-use crate::dre::{L, N, U_BAR_SIZE, R_PD_SIZE};
+use crate::dre::{L, N, U_BAR_SIZE};
 
-const WINDOW_BITS: usize = 4;
-const WINDOW_COUNT: usize = (Fr::N_BITS + WINDOW_BITS - 1) / WINDOW_BITS;
-const WINDOW_ENTRIES: usize = 1 << WINDOW_BITS;
-const PRECOMP_TABLE_BITS: usize = WINDOW_COUNT * WINDOW_ENTRIES * 2 * N;
+// Signed-digit scalar-mul parameters. Must match the `SIGNED_SCALAR_*` constants in
+// garbled-snark-verifier's dv_bn254::g1. With w=8 we do ≤ 33 mixed-adds over a
+// half-sized (128-entry) precomputed table; the halved MUX saves ~6M AND vs the
+// unsigned w=8 version. Digits d_i ∈ [-128, 127] are produced offline via
+// `booth_recode_w8`; each window carries 7 index + 1 sign + 1 skip = 9 bits.
+pub const WINDOW_BITS: usize = 8;
+pub const WINDOW_COUNT: usize = (Fr::N_BITS + WINDOW_BITS - 1) / WINDOW_BITS + 1; // +1 for Booth carry
+pub const WINDOW_ENTRIES: usize = 1 << (WINDOW_BITS - 1); // halved: 128
+pub const DIGIT_BITS: usize = WINDOW_BITS + 1; // 7 idx + 1 sign + 1 skip
+pub const PRECOMP_TABLE_BITS: usize = WINDOW_COUNT * WINDOW_ENTRIES * 2 * N;
+pub const DIGIT_TOTAL_BITS: usize = WINDOW_COUNT * DIGIT_BITS;
 
-/// Compile the BABE circuit structure without fixing witness values.
+/// Compile the DSGC circuit structure without fixing witness values.
 ///
 /// Input wire allocation order:
-///   [0..PRECOMP_TABLE_BITS)      precomputed table for P_D,
-///                                64 windows × 16 affine points in Montgomery form
+///   [0..PRECOMP_TABLE_BITS)      signed-digit precomputed table for Base,
+///                                WINDOW_COUNT windows × WINDOW_ENTRIES affine points
+///                                (entry j = (j+1)·256^i·P), Montgomery form
 ///   [..+N)                       pi_x — x-coordinate of the proof point π
 ///   [..+N)                       pi_y — y-coordinate of π
-///   [..+N)                       x_d  — scalar (Fr element)
+///   [..+DIGIT_TOTAL_BITS)        x_d recoded into Booth digits, 9 bits per window
 pub fn compile_dsgc(g: G1Affine) -> (CircuitAdapter, Vec<usize>) {
     let mut bld = CircuitAdapter::default();
     let mut table_wires = Vec::with_capacity(PRECOMP_TABLE_BITS);
     for _ in 0..(WINDOW_COUNT * WINDOW_ENTRIES * 2) {
         table_wires.extend(Fq::wires(&mut bld).0);
     }
+
+    // Signed-digit encoding of x_d (33 × 9 = 297 bits)
+    let digit_wires: Vec<usize> = (0..DIGIT_TOTAL_BITS).map(|_| bld.fresh_one()).collect();
+
     // π input wires
     let pi_x = Fq::wires(&mut bld);
     let pi_y = Fq::wires(&mut bld);
-    let x_d = Fr::wires(&mut bld);
-    let output_indices = emit_dsgc(&mut bld, &table_wires, &pi_x.0, &pi_y.0, &x_d.0, g);
+
+    let output_indices = emit_dsgc(&mut bld, &table_wires, &digit_wires, &pi_x.0, &pi_y.0, g);
     (bld, output_indices)
 }
 
 /// Output layout (total L = U_BAR_SIZE + R_PD_SIZE = 2033 bits):
 ///   [0..U_BAR_SIZE)  ū(π) or ū(g) — 1 + 5·N bits, LSB-first
-///   [U_BAR_SIZE..L)  (X,Y,Z) of x_d·P_D — 3·N bits, projective normal form
+///   [U_BAR_SIZE..L)  (X,Y,Z) of x_d·P_D — 3·N bits, projective Montgomery form
 fn emit_dsgc(
     bld: &mut CircuitAdapter,
     table_wires: &[usize],
+    digits: &[usize],
     pi_x: &[usize],
     pi_y: &[usize],
-    x_d: &[usize],
     g: G1Affine,
 ) -> Vec<usize> {
     assert_eq!(table_wires.len(), PRECOMP_TABLE_BITS);
@@ -85,17 +97,14 @@ fn emit_dsgc(
         .map(|k| selector(bld, pi_u_bar[k], g_u_bar[k], on_curve))
         .collect();
 
-    // ── x_d · P_D subcircuit (garbler-private windowed precomputed table) ────
-    let prod_proj_m = GcG1Projective::scalar_mul_private_table_circuit(bld, x_d, table_wires);
+    // ── x_d · Base subcircuit (garbler-private signed-digit windowed table) ────
+    let prod_proj_m =
+        GcG1Projective::scalar_mul_private_signed_table_circuit(bld, digits, table_wires);
 
-    // Normalize each coordinate: (X·R, Y·R, Z·R) → (X, Y, Z)
-    let x_out = Fq::mul_by_constant_montgomery(bld, &prod_proj_m[..N],      ark_bn254::Fq::from(1u64));
-    let y_out = Fq::mul_by_constant_montgomery(bld, &prod_proj_m[N..2 * N], ark_bn254::Fq::from(1u64));
-    let z_out = Fq::mul_by_constant_montgomery(bld, &prod_proj_m[2 * N..],  ark_bn254::Fq::from(1u64));
-
-    output_indices.extend(x_out);
-    output_indices.extend(y_out);
-    output_indices.extend(z_out);
+    // Output stays in Montgomery form (X·R, Y·R, Z·R).
+    output_indices.extend_from_slice(&prod_proj_m[..N]);
+    output_indices.extend_from_slice(&prod_proj_m[N..2 * N]);
+    output_indices.extend_from_slice(&prod_proj_m[2 * N..]);
     assert_eq!(output_indices.len(), L);
 
     output_indices
@@ -123,6 +132,59 @@ fn g_u_bar_indices(bld: &mut CircuitAdapter, g: G1Affine) -> Vec<usize> {
     indices
 }
 
+/// Booth-recode `k` into `WINDOW_COUNT` signed digits d_i ∈ [-128, 127] satisfying
+/// `Σ_i d_i · 256^i ≡ k  (mod r)`. The extra window absorbs the final carry.
+pub fn booth_recode_w8(k: ark_bn254::Fr) -> Vec<i32> {
+    use ark_ff::{BigInteger, PrimeField};
+    let scalar_bits = k.into_bigint().to_bits_le();
+
+    let mut digits = Vec::with_capacity(WINDOW_COUNT);
+    let mut carry: i32 = 0;
+    for i in 0..WINDOW_COUNT {
+        let mut byte: i32 = 0;
+        for b in 0..WINDOW_BITS {
+            let idx = i * WINDOW_BITS + b;
+            if idx < scalar_bits.len() && scalar_bits[idx] {
+                byte |= 1 << b;
+            }
+        }
+        let mut d = byte + carry;
+        if d >= (1 << (WINDOW_BITS - 1)) {
+            d -= 1 << WINDOW_BITS;
+            carry = 1;
+        } else {
+            carry = 0;
+        }
+        digits.push(d);
+    }
+    debug_assert_eq!(carry, 0, "booth_recode_w8: residual carry did not fit in WINDOW_COUNT digits");
+    digits
+}
+
+/// Encode a signed-digit sequence into the 9-bits-per-window witness layout consumed by
+/// `scalar_mul_private_signed_table_circuit`: `[idx_0 .. idx_{w-2}][sign][skip]`.
+pub fn encode_signed_digits(digits: &[i32]) -> Vec<bool> {
+    let mut bits = Vec::with_capacity(digits.len() * DIGIT_BITS);
+    for &d in digits {
+        if d == 0 {
+            for _ in 0..(WINDOW_BITS - 1) {
+                bits.push(false);
+            }
+            bits.push(false);
+            bits.push(true);
+        } else {
+            let mag = d.unsigned_abs(); // |d| in [1, 128]
+            let idx = mag - 1; // in [0, 127], fits in 7 bits
+            for b in 0..(WINDOW_BITS - 1) {
+                bits.push((idx >> b) & 1 != 0);
+            }
+            bits.push(d < 0);
+            bits.push(false);
+        }
+    }
+    bits
+}
+
 /// SHA256 commitment to a `Vec<Option<S>>` GC ciphertext list.
 pub fn gc_ciphertexts_commit(ciphertexts: &[Option<garbled_snark_verifier::bag::S>]) -> [u8; 32] {
     let mut hasher = Sha256::new();
@@ -137,26 +199,32 @@ pub fn gc_ciphertexts_commit(ciphertexts: &[Option<garbled_snark_verifier::bag::
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
     use super::*;
     use ark_ec::CurveGroup;
     use ark_ff::{AdditiveGroup, UniformRand, Zero};
-    use garbled_snark_verifier::bag::{Circuit, S};
+    use garbled_snark_verifier::bag::S;
     use garbled_snark_verifier::core::utils::reset_gid;
     use crate::dre::matrices::u_bar_vec;
+    use crate::dre::R_PD_SIZE;
 
     fn random_g1_affine() -> G1Affine {
         let mut rng = rand::thread_rng();
         ark_bn254::G1Projective::rand(&mut rng).into_affine()
     }
 
-    fn build_pd_table_bits(pd: &G1Affine) -> Vec<bool> {
+    /// Build the halved signed-digit Base table.
+    ///
+    /// Layout: window `i` (i = 0..WINDOW_COUNT), entry `j` (j = 0..WINDOW_ENTRIES) stores
+    /// `(j+1) · 256^i · Base` in affine Montgomery form.
+    fn build_base_table_bits(base: &G1Affine) -> Vec<bool> {
         let mut bits = Vec::with_capacity(PRECOMP_TABLE_BITS);
-        let mut window_base = ark_bn254::G1Projective::from(pd.clone());
+        let mut window_base = ark_bn254::G1Projective::from(base.clone());
 
         for _ in 0..WINDOW_COUNT {
-            let mut multiple = ark_bn254::G1Projective::zero();
+            let mut multiple = window_base; // start at 1·window_base
             for _ in 0..WINDOW_ENTRIES {
-                let aff = multiple.clone().into_affine();
+                let aff = multiple.into_affine();
                 bits.extend(Fq::to_bits(Fq::as_montgomery(aff.x)));
                 bits.extend(Fq::to_bits(Fq::as_montgomery(aff.y)));
                 multiple += window_base;
@@ -169,13 +237,14 @@ mod tests {
         bits
     }
 
-    /// Build a full witness: precomputed window table for P_D, pi_x, pi_y, x_d.
-    fn build_witness(pi: &G1Affine, pd: &G1Affine, x_d: ark_bn254::Fr) -> Vec<bool> {
-        build_pd_table_bits(pd)
+    /// Build a full witness: precomputed signed table for P_D, pi_x, pi_y, Booth-recoded x_d.
+    fn build_witness(pi: &G1Affine, base: &G1Affine, x_d: ark_bn254::Fr) -> Vec<bool> {
+        let digits = booth_recode_w8(x_d);
+        build_base_table_bits(base)
             .into_iter()
+            .chain(encode_signed_digits(&digits).into_iter())
             .chain(Fq::to_bits(pi.x))
             .chain(Fq::to_bits(pi.y))
-            .chain(Fr::to_bits(x_d))
             .collect()
     }
 
@@ -183,67 +252,67 @@ mod tests {
     fn test_babe_gc_on_curve() {
         let pi = random_g1_affine();
         let g  = random_g1_affine();
-        let pd = random_g1_affine();
+        let base = random_g1_affine();
         let x_d = ark_bn254::Fr::from(1u64);
 
-        let witness = build_witness(&pi, &pd, x_d);
+        let witness = build_witness(&pi, &base, x_d);
 
         reset_gid();
         let (bld, output_indices) = compile_dsgc(g);
         let mut circuit = bld.build(&witness);
         circuit.gate_counts().print();
 
-        // for gate in &mut circuit.1 {
-        //     gate.evaluate();
-        // }
-        //
-        // let output: Vec<bool> = output_indices
-        //     .iter()
-        //     .map(|&i| circuit.0[i].borrow().get_value())
-        //     .collect();
-        //
-        // assert_eq!(output.len(), L);
-        //
-        // // u₀ = 1
-        // assert!(output[0]);
-        //
-        // let x_bits = Fq::to_bits(pi.x);
-        // for k in 0..N {
-        //     assert_eq!(output[1 + k], x_bits[k], "x bit {k} mismatch");
-        // }
-        //
-        // let y_bits = Fq::to_bits(pi.y);
-        // for k in 0..N {
-        //     assert_eq!(output[1 + N + k], y_bits[k], "y bit {k} mismatch");
-        // }
-        //
-        // let x_sq_bits = Fq::to_bits(pi.x * pi.x);
-        // for k in 0..N {
-        //     assert_eq!(output[1 + 2 * N + k], x_sq_bits[k], "x² bit {k} mismatch");
-        // }
-        //
-        // let y_sq_bits = Fq::to_bits(pi.y * pi.y);
-        // for k in 0..N {
-        //     assert_eq!(output[1 + 3 * N + k], y_sq_bits[k], "y² bit {k} mismatch");
-        // }
-        //
-        // let xy_bits = Fq::to_bits(pi.x * pi.y);
-        // for k in 0..N {
-        //     assert_eq!(output[1 + 4 * N + k], xy_bits[k], "xy bit {k} mismatch");
-        // }
+        for gate in &mut circuit.1 {
+            gate.evaluate();
+        }
+
+        let output: Vec<bool> = output_indices
+            .iter()
+            .map(|&i| circuit.0[i].borrow().get_value())
+            .collect();
+
+        assert_eq!(output.len(), L);
+
+        // u₀ = 1
+        assert!(output[0]);
+
+        let x_bits = Fq::to_bits(pi.x);
+        for k in 0..N {
+            assert_eq!(output[1 + k], x_bits[k], "x bit {k} mismatch");
+        }
+
+        let y_bits = Fq::to_bits(pi.y);
+        for k in 0..N {
+            assert_eq!(output[1 + N + k], y_bits[k], "y bit {k} mismatch");
+        }
+
+        let x_sq_bits = Fq::to_bits(pi.x * pi.x);
+        for k in 0..N {
+            assert_eq!(output[1 + 2 * N + k], x_sq_bits[k], "x² bit {k} mismatch");
+        }
+
+        let y_sq_bits = Fq::to_bits(pi.y * pi.y);
+        for k in 0..N {
+            assert_eq!(output[1 + 3 * N + k], y_sq_bits[k], "y² bit {k} mismatch");
+        }
+
+        let xy_bits = Fq::to_bits(pi.x * pi.y);
+        for k in 0..N {
+            assert_eq!(output[1 + 4 * N + k], xy_bits[k], "xy bit {k} mismatch");
+        }
     }
 
     #[test]
     fn test_babe_gc_off_curve_falls_back_to_g() {
         let pi = random_g1_affine();
         let g  = random_g1_affine();
-        let pd = random_g1_affine();
+        let base = random_g1_affine();
         let x_d = ark_bn254::Fr::from(1u64);
 
         let bad_y = pi.y + ark_bn254::Fq::from(1u64);
         let mut off_pi = pi;
         off_pi.y = bad_y;
-        let witness = build_witness(&off_pi, &pd, x_d);
+        let witness = build_witness(&off_pi, &base, x_d);
 
         reset_gid();
         let (bld, output_indices) = compile_dsgc(g);
@@ -273,14 +342,14 @@ mod tests {
 
     /// Plain (non-garbled) evaluation: verify x_d · P_D projective output.
     #[test]
-    fn test_babe_gc_xd_pd_output() {
+    fn test_babe_gc_xd_base_output() {
         let mut rng = rand::thread_rng();
         let g  = random_g1_affine();
-        let pd = random_g1_affine();
+        let base = random_g1_affine();
         let pi = random_g1_affine();
         let x_d = ark_bn254::Fr::rand(&mut rng);
 
-        let witness = build_witness(&pi, &pd, x_d);
+        let witness = build_witness(&pi, &base, x_d);
 
         reset_gid();
         let (bld, output_indices) = compile_dsgc(g);
@@ -297,12 +366,12 @@ mod tests {
         assert_eq!(output.len(), L);
 
         // Reconstruct projective point (X,Y,Z) in normal form from R_PD bits
-        let x = Fq::from_bits(output[U_BAR_SIZE..U_BAR_SIZE + N].to_vec());
-        let y = Fq::from_bits(output[U_BAR_SIZE + N..U_BAR_SIZE + 2 * N].to_vec());
-        let z = Fq::from_bits(output[U_BAR_SIZE + 2 * N..L].to_vec());
+        let x = Fq::from_montgomery(Fq::from_bits(output[U_BAR_SIZE..U_BAR_SIZE + N].to_vec()));
+        let y = Fq::from_montgomery(Fq::from_bits(output[U_BAR_SIZE + N..U_BAR_SIZE + 2 * N].to_vec()));
+        let z = Fq::from_montgomery(Fq::from_bits(output[U_BAR_SIZE + 2 * N..L].to_vec()));
 
         let result_proj     = ark_bn254::G1Projective::new(x, y, z);
-        let expected_affine = (ark_bn254::G1Projective::from(pd) * x_d).into_affine();
+        let expected_affine = (ark_bn254::G1Projective::from(base) * x_d).into_affine();
 
         assert_eq!(
             result_proj.into_affine(), expected_affine,
@@ -321,31 +390,43 @@ mod tests {
     fn test_babe_gc_garbled_e2e() {
         let mut rng = rand::thread_rng();
         let g  = random_g1_affine();
-        let pd = random_g1_affine();
+        let base = random_g1_affine();
         let pi = random_g1_affine();
         let x_d = ark_bn254::Fr::rand(&mut rng);
 
         // 1. Generate circuit
+        let now = Instant::now();
         reset_gid();
         let (bld, output_indices) = compile_dsgc(g);
         let mut circuit = bld.build(&[]);
+        println!("circuit generate time: {:?}", now.elapsed());
+
 
         // 2. Generate a new set of labels — one label0 per input wire.
+        let now = Instant::now();
         let encoding_keys: Vec<S> = (0..(PRECOMP_TABLE_BITS + 3 * N)).map(|_| S::random()).collect();
         for (i, &key) in encoding_keys.iter().enumerate() {
             circuit.0[2 + i].borrow_mut().label = Some(key);
         }
+        println!("encoding time: {:?}", now.elapsed());
 
         // 3. Derive input label values from concrete inputs
-        let witness = build_witness(&pi, &pd, x_d);
+        let witness = build_witness(&pi, &base, x_d);
 
         // 4. Evaluate garbled circuit
+        let now = Instant::now();
         circuit.set_witness_value(&witness);
         for gate in &mut circuit.1 {
             gate.evaluate();
         }
-        let garblings = circuit.garbled_gates();
-        let _ = circuit.garbled_evaluate(&garblings);
+        println!("evaluation time: {:?}", now.elapsed());
+        let now = Instant::now();
+        let ciphertext = circuit.garbled_gates();
+        println!("garbled gates time: {:?}", now.elapsed());
+
+        let now = Instant::now();
+        let _ = circuit.garbled_evaluate(&ciphertext);
+        println!("garbled evaluate time: {:?}", now.elapsed());
 
         // Collect all output labels
         let output_labels: Vec<S> = output_indices
@@ -366,141 +447,30 @@ mod tests {
             assert_eq!(output_labels[k], expected_label, "ū label mismatch at k={k}");
         }
 
-        // 5b. Verify x_d·P_D output labels
+        // 5b. Verify x_d·Base output labels
         //     Get the actual output bits, verify they represent the correct point,
         //     then confirm the labels encode exactly those bits.
-        let pd_bits: Vec<bool> = output_indices[U_BAR_SIZE..]
+        let rpd_bits: Vec<bool> = output_indices[U_BAR_SIZE..]
             .iter()
             .map(|&i| circuit.0[i].borrow().get_value())
             .collect();
-        assert_eq!(pd_bits.len(), R_PD_SIZE);
+        assert_eq!(rpd_bits.len(), R_PD_SIZE);
 
-        let x = Fq::from_bits(pd_bits[..N].to_vec());
-        let y = Fq::from_bits(pd_bits[N..2 * N].to_vec());
-        let z = Fq::from_bits(pd_bits[2 * N..].to_vec());
+        let x = Fq::from_montgomery(Fq::from_bits(rpd_bits[..N].to_vec()));
+        let y = Fq::from_montgomery(Fq::from_bits(rpd_bits[N..2 * N].to_vec()));
+        let z = Fq::from_montgomery(Fq::from_bits(rpd_bits[2 * N..].to_vec()));
 
         let result_proj     = ark_bn254::G1Projective::new(x, y, z);
-        let expected_affine = (ark_bn254::G1Projective::from(pd) * x_d).into_affine();
+        let expected_affine = (ark_bn254::G1Projective::from(base) * x_d).into_affine();
         assert_eq!(
             result_proj.into_affine(), expected_affine,
-            "x_d · P_D projective output represents wrong affine point"
+            "x_d · Base projective output represents wrong affine point"
         );
 
         for k in 0..R_PD_SIZE {
-            let bit            = pd_bits[k];
+            let bit            = rpd_bits[k];
             let expected_label = circuit.0[output_indices[U_BAR_SIZE + k]].borrow().select(bit);
             assert_eq!(output_labels[U_BAR_SIZE + k], expected_label, "R_PD label mismatch at k={k}");
-        }
-    }
-
-    #[cfg(feature = "garbled")]
-    #[test]
-    fn test_babe_gc_garbled_labels() {
-        let pi  = random_g1_affine();
-        let g   = random_g1_affine();
-        let pd  = random_g1_affine();
-        let x_d = ark_bn254::Fr::from(1u64);
-
-        reset_gid();
-        let (bld, output_indices) = compile_dsgc(g);
-        let mut circuit = bld.build(&vec![]);
-
-        let witness = build_witness(&pi, &pd, x_d);
-        circuit.set_witness_value(&witness);
-        for gate in &mut circuit.1 {
-            gate.evaluate();
-        }
-        let garblings = circuit.garbled_gates();
-        let _ = circuit.garbled_evaluate(&garblings);
-
-        let output_labels: Vec<S> = output_indices
-            .iter()
-            .map(|&i| {
-                let w = &circuit.0[i];
-                w.borrow().select(w.borrow().get_value())
-            }).collect();
-        assert_eq!(output_labels.len(), L);
-
-        let u_bar = u_bar_vec(&pi);
-        assert_eq!(u_bar.len(), U_BAR_SIZE);
-        for k in 0..U_BAR_SIZE {
-            let expected_bit   = !u_bar[k].is_zero();
-            let expected_label = circuit.0[output_indices[k]].borrow().select(expected_bit);
-            assert_eq!(
-                output_labels[k],
-                expected_label,
-                "garbled output label mismatch at ū[{k}]"
-            );
-        }
-    }
-
-    #[cfg(feature = "garbled")]
-    #[test]
-    fn test_output_labels() {
-        use garbled_snark_verifier::core::utils::NON_CAC_DELTA;
-
-        let g   = random_g1_affine();
-        let pd  = random_g1_affine();
-        let x_d = ark_bn254::Fr::from(1u64);
-
-        reset_gid();
-        let (bld, output_indices) = compile_dsgc(g);
-        let mut circuit = bld.build(&[]);
-
-        // Encoding keys for all input wires
-        let encoding_keys: Vec<S> = (0..(PRECOMP_TABLE_BITS + 3 * N)).map(|_| S::random()).collect();
-        for (i, &key) in encoding_keys.iter().enumerate() {
-            circuit.0[2 + i].borrow_mut().label = Some(key);
-        }
-
-        let mut rng = rand::thread_rng();
-        let p1a = ark_bn254::G1Projective::rand(&mut rng).into_affine();
-        let p1b = ark_bn254::G1Projective::rand(&mut rng).into_affine();
-
-        let eval = |circuit: &mut Circuit, p: &ark_bn254::G1Affine| -> Vec<S> {
-            let witness = build_witness(p, &pd, x_d);
-
-            for wire in circuit.0.iter().skip(2) {
-                wire.borrow_mut().value = None;
-            }
-            circuit.set_witness_value(&witness);
-            for gate in &mut circuit.1 {
-                gate.evaluate();
-            }
-            let garblings = circuit.garbled_gates();
-            let _ = circuit.garbled_evaluate(&garblings);
-
-            output_indices
-                .iter()
-                .map(|&i| {
-                    let w = &circuit.0[i];
-                    w.borrow().select(w.borrow().get_value())
-                })
-                .collect()
-        };
-
-        let labels_a = eval(&mut circuit, &p1a);
-        let labels_b = eval(&mut circuit, &p1b);
-
-        // Verify Free XOR property on the ū part only (R_PD uses the same P_D/x_d so labels
-        // are identical for both evaluations and trivially equal — not tested here)
-        let u_bar_a = u_bar_vec(&p1a);
-        let u_bar_b = u_bar_vec(&p1b);
-        assert_eq!(u_bar_a.len(), U_BAR_SIZE);
-        assert_eq!(u_bar_b.len(), U_BAR_SIZE);
-
-        for k in 0..U_BAR_SIZE {
-            let bit_a = !u_bar_a[k].is_zero();
-            let bit_b = !u_bar_b[k].is_zero();
-            if bit_a == bit_b {
-                assert_eq!(labels_a[k], labels_b[k], "k={k}: same u_bar bit → equal output labels");
-            } else {
-                assert_eq!(
-                    labels_a[k] ^ labels_b[k],
-                    NON_CAC_DELTA,
-                    "k={k}: different u_bar bits → labels must differ by DELTA"
-                );
-            }
         }
     }
 }
