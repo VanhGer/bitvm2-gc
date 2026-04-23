@@ -1,4 +1,4 @@
-use ark_bn254::Fr;
+use ark_bn254::{Fr, G1Affine};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ec::pairing::Pairing;
 use ark_ff::UniformRand;
@@ -10,7 +10,7 @@ use crate::instance::secret::InstanceSecrets;
 use ark_groth16::VerifyingKey as Groth16VerifyingKey;
 use ark_serialize::CanonicalSerialize;
 use crate::instance::commit::CACInstanceCommit;
-use crate::utils::{g2_to_ser, groth16_vk_x, h_256};
+use crate::utils::{g2_to_ser, ro_from_pairing_bytes};
 
 pub mod secret;
 pub mod commit;
@@ -88,25 +88,40 @@ impl BABEInstance {
         }
     }
 
-    /// Encsetup(crs, x, msg; r): ctsetup = (r·[delta]_2, RO(rY) ⊕ msg),
-    /// where Y = e([alpha]_1, [beta]_2) · e(vk_x, [gamma]_2).
+    /// Enc*(crs, x_S, |D|, msg; r, r·B):
+    ///   P_S = gamma_abc[0] + Σ_{k} x_S[k]·gamma_abc[k+1]
+    ///   mask = Y_S^r - e(r·B, γ) where Y_S^r = e(α, r·β) + e(P_S, r·γ)
     pub fn enc_setup(
         &mut self,
         vk: &Groth16VerifyingKey<ark_bn254::Bn254>,
-        public_inputs: &[Fr],
+        static_inputs: &[Fr],
+        dynamic_pin_size: usize,
     ) -> Result<(), String> {
-        let vk_x = groth16_vk_x(vk, public_inputs).ok_or("Failed to get vk_x")?;
+        let num_static = static_inputs.len();
+        if num_static + dynamic_pin_size + 1 != vk.gamma_abc_g1.len() {
+            return Err("static/dynamic split does not match vk".to_string());
+        }
 
         let r = self.secrets.r;
+
+        let mut p_s = vk.gamma_abc_g1[0].into_group();
+        for (k, x) in static_inputs.iter().enumerate() {
+            p_s += vk.gamma_abc_g1[k + 1].into_group() * *x;
+        }
+
+        let r_b = self.secrets.r_b;
         let r_delta = vk.delta_g2.into_group() * r;
 
         let t1 = ark_bn254::Bn254::pairing(vk.alpha_g1, vk.beta_g2.into_group() * r);
-        let t2 = ark_bn254::Bn254::pairing(vk_x, vk.gamma_g2.into_group() * r);
-        let r_y = t1 + t2;
+        let t2 = ark_bn254::Bn254::pairing(p_s, vk.gamma_g2.into_group() * r);
+        let y_s_r = t1 + t2;
 
-        let mut ry_bytes = Vec::new();
-        r_y.serialize_compressed(&mut ry_bytes).or(Err("Failed to serialize ry_bytes"))?;
-        let mask = h_256(&ry_bytes);
+        let q_b = ark_bn254::Bn254::pairing(r_b, vk.gamma_g2);
+        let mask_gt = y_s_r - q_b;
+
+        let mut mask_bytes = Vec::new();
+        mask_gt.serialize_compressed(&mut mask_bytes).or(Err("Failed to serialize mask_bytes"))?;
+        let mask = ro_from_pairing_bytes(&mask_bytes, self.secrets.msg.len());
         let ct3 = self.secrets.msg.iter().zip(mask.iter()).map(|(a, b)| a ^ b).collect::<Vec<_>>();
 
         self.ct_setup = WeKnownPi1SetupCt {
@@ -149,6 +164,9 @@ mod tests {
 
     #[test]
     fn enc_setup_prove_dec_roundtrip() {
+        use crate::babe::{we_known_pi1_dec, WeKnownPi1ProveCt};
+        use crate::utils::g1_to_ser;
+
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(42);
 
         let a = Fr::from(3u64);
@@ -160,35 +178,28 @@ mod tests {
             &pk,
             DummyMulCircuit::<Fr> { a: Some(a), b: Some(b) },
             &mut rng,
-        )
-            .expect("groth16 prove");
-        let public_inputs = vec![a * b];
+        ).expect("groth16 prove");
+
+        // |S|=1 (a*b static), |D|=1 (a*a dynamic)
+        let static_inputs = vec![a * b];
+        let dynamic_pin_size = 1usize;
 
         let mut instance = BABEInstance::new_from_seed(42);
-        instance.enc_setup(&vk, &public_inputs).unwrap();
+        instance.enc_setup(&vk, &static_inputs, dynamic_pin_size).unwrap();
 
-        let ct1 = proof.a.into_group() * instance.secrets.r;
+        let r = instance.secrets.r;
 
-        let ct2 = ark_bn254::G2Affine::deserialize_compressed(
-            instance.ct_setup.ct2_r_delta_g2.as_slice(),
-        )
-            .expect("deserialize ct2")
-            .into_group();
-        let lhs = ark_bn254::Bn254::pairing(ct1, proof.b);
-        let rhs = ark_bn254::Bn254::pairing(proof.c, ct2);
-        let r_y = lhs - rhs;
+        // Simulate DSGC output: c1' = r·P_D + r·B
+        // P_D = (a*a) · gamma_abc[|S|+1] = (a*a) · gamma_abc[2]
+        let p_d = vk.gamma_abc_g1[2].into_group() * (a * a);
+        let c1_prime = (p_d * r + instance.secrets.r_b.into_group()).into_affine();
 
-        let mut ry_bytes = Vec::new();
-        r_y.serialize_compressed(&mut ry_bytes).unwrap();
-        let mask = h_256(&ry_bytes);
+        let ctprove = WeKnownPi1ProveCt { ct1_r_pi1: g1_to_ser(proof.a.into_group() * r) };
+        let decrypted = we_known_pi1_dec(
+            &vk, &instance.ct_setup, &ctprove, c1_prime,
+            proof.b.into_group(), proof.c.into_group(),
+        ).unwrap();
 
-        let decrypted: [u8; 32] = instance.ct_setup.ct3_masked_msg.iter()
-            .zip(mask.iter())
-            .map(|(c, m)| c ^ m)
-            .collect::<Vec<_>>()
-            .try_into()
-            .unwrap();
-
-        assert_eq!(decrypted, instance.secrets.msg);
+        assert_eq!(decrypted.as_slice(), &instance.secrets.msg);
     }
 }

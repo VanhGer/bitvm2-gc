@@ -64,14 +64,15 @@ pub fn verify_opened_instances(
     package: &CACSetupPackage,
     opened: &[(usize, u64)],
     vk: &Groth16VerifyingKey<ark_bn254::Bn254>,
-    public_inputs: &[Fr],
+    static_public_inputs: &[Fr],
+    dynamic_pin_size: usize,
 ) -> Result<(), String> {
     use p3_maybe_rayon::prelude::*;
     opened
         .par_iter()
         .map(|&(idx, seed)| {
             let mut inst = BABEInstance::new_from_seed(seed);
-            inst.enc_setup(vk, public_inputs)
+            inst.enc_setup(vk, static_public_inputs, dynamic_pin_size)
                 .map_err(|e| format!("instance {idx}: enc_setup failed: {e}"))?;
 
             let recomputed = inst.commit();
@@ -152,11 +153,12 @@ mod tests {
         let (_, vk) = ark_groth16::Groth16::<ark_bn254::Bn254>::setup(
             DummyMulCircuit::<Fr> { a: Some(a), b: Some(b) }, &mut rng,
         ).expect("groth16 setup");
-        let public_inputs = vec![a * b];
+        let static_public_inputs = vec![a * b];
+        let dynamic_public_inputs = vec![a * a];
 
         // Verifier creates TEST_N_CC instances and commits.
         let now = std::time::Instant::now();
-        let verifier = BABEVerifier::new(TEST_N_CC, &vk, &public_inputs)
+        let verifier = BABEVerifier::new(TEST_N_CC, &vk, &static_public_inputs, dynamic_public_inputs.len())
             .expect("BABEVerifier::new failed");
         let elapsed = now.elapsed();
         println!("Verifier setup for {TEST_N_CC} instances took {elapsed:.2?}");
@@ -179,7 +181,7 @@ mod tests {
 
         let now = std::time::Instant::now();
         // Prover verifies opened instances by re-deriving from seed.
-        verify_opened_instances(&package, &opened, &vk, &public_inputs)
+        verify_opened_instances(&package, &opened, &vk, &static_public_inputs, dynamic_public_inputs.len())
             .expect("opened instance verification failed");
         let elapsed = now.elapsed();
         println!("Prover verification of opened instances took {elapsed:.2?}");

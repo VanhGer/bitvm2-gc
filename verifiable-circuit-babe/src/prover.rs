@@ -272,11 +272,12 @@ mod tests {
             DummyMulCircuit::<Fr> { a: Some(a), b: Some(b) },
             &mut rng,
         ).unwrap();
-        let public_inputs = vec![a * b];
+        let static_public_inputs = vec![a * b];
+        let dynamic_public_inputs = vec![a * a];
 
         // 2. Verifier enc_setup.
         let mut verifier = BABEInstance::new_from_seed(rand::random());
-        verifier.enc_setup(&vk, &public_inputs).unwrap();
+        verifier.enc_setup(&vk, &static_public_inputs, dynamic_public_inputs.len()).unwrap();
 
         // 3. Full labels: [const_0, const_1, pi1_bits...].
         let full_labels = verifier.compute_pi1_labels_based_on_value(proof.a);
@@ -313,9 +314,10 @@ mod tests {
         let (_, vk) = ark_groth16::Groth16::<Bn254>::setup(
             DummyMulCircuit::<Fr> { a: Some(a), b: Some(b) }, &mut rng,
         ).unwrap();
-        let public_inputs = vec![a * b];
+        let static_public_inputs = vec![a * b];
+        let dynamic_public_inputs = vec![a * a];
 
-        let verifier = BABEVerifier::new(TEST_N_CC, &vk, &public_inputs).unwrap();
+        let verifier = BABEVerifier::new(TEST_N_CC, &vk, &static_public_inputs, dynamic_public_inputs.len()).unwrap();
         let package = verifier.commit();
         let finalized_indices = cac_finalize_indices(&package, TEST_M_CC);
         let (_, finalized) = verifier.open(&finalized_indices);

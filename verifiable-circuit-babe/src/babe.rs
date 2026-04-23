@@ -1,5 +1,5 @@
 use ark_bn254::{Bn254, Fr, G1Affine};
-use ark_ec::AffineRepr;
+use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
 use ark_groth16::{Proof as Groth16Proof, VerifyingKey as Groth16VerifyingKey};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -140,9 +140,10 @@ pub struct BabeCACE2ERun {
 /// and the public `CACSetupPackage` to send to the Prover.
 pub fn babe_verifier_cac_setup(
     vk: &Groth16VerifyingKey<Bn254>,
-    public_inputs: &[Fr],
+    static_public_inputs: &[Fr],
+    dynamic_pin_size: usize,
 ) -> (BABEVerifier, CACSetupPackage) {
-    let verifier = BABEVerifier::new(N_CC, vk, public_inputs).expect("verifier CAC setup failed");
+    let verifier = BABEVerifier::new(N_CC, vk, static_public_inputs, dynamic_pin_size).expect("verifier CAC setup failed");
     println!("Verifier: committing all instances..");
     let package = verifier.commit();
     (verifier, package)
@@ -175,9 +176,10 @@ pub fn babe_prover_verify_setup(
     finalized: &[FinalizedInstanceData],
     soldering: &SolderingData,
     vk: &Groth16VerifyingKey<Bn254>,
-    public_inputs: &[Fr],
+    static_public_inputs: &[Fr],
+    dynamic_pin_size: usize,
 ) -> Result<(), String> {
-    verify_opened_instances(package, opened, vk, public_inputs)?;
+    verify_opened_instances(package, opened, vk, static_public_inputs, dynamic_pin_size)?;
     verify_finalized_instances(package, finalized)?;
     BABEProver::verify_soldering_output(package, soldering)?;
     Ok(())
@@ -333,27 +335,46 @@ pub fn babe_prover_withdraw(sig_v_presig: BabeBtcSig) -> TxWithdrawWitness {
 
 // ─── Enc_ functions ────────────────────────────────────────────────────────
 
-/// Encsetup(crs, x, msg; r): ctsetup = (r·[delta]_2, RO(rY) ⊕ msg).
+/// Enc*(crs, x_S, |D|, msg, B; r):
+///   Inputs are split as [x_1..x_{|S|}] static, [x_{|S|+1}..x_{|S|+|D|}] dynamic.
+///   P_S = gamma_abc[0] + Σ_{k=0}^{|S|-1} x_S[k]·gamma_abc[k+1]
+///   mask = Y_S^r - e(r·B, γ) where Y_S^r = e(α, r·β) + e(P_S, r·γ)
+///   Returns (ctsetup, r·B) — r·B is garbler-private and never published.
 pub fn we_known_pi1_encsetup(
     vk: &Groth16VerifyingKey<Bn254>,
-    public_inputs: &[Fr],
+    static_inputs: &[Fr],
+    num_dynamic: usize,
     msg: &[u8],
     r_bytes: [u8; 32],
-) -> Option<WeKnownPi1SetupCt> {
+    b_blind: G1Affine,
+) -> Option<(WeKnownPi1SetupCt, G1Affine)> {
+    let num_static = static_inputs.len();
+    if num_static + num_dynamic + 1 != vk.gamma_abc_g1.len() {
+        return None;
+    }
     let r = Fr::from_le_bytes_mod_order(&r_bytes);
-    let vk_x = groth16_vk_x(vk, public_inputs)?;
+
+    let mut p_s = vk.gamma_abc_g1[0].into_group();
+    for (k, x) in static_inputs.iter().enumerate() {
+        p_s += vk.gamma_abc_g1[k + 1].into_group() * *x;
+    }
+
+    let r_b = b_blind.into_group() * r;
     let r_delta = vk.delta_g2.into_group() * r;
 
     let t1 = Bn254::pairing(vk.alpha_g1, vk.beta_g2.into_group() * r);
-    let t2 = Bn254::pairing(vk_x, vk.gamma_g2.into_group() * r);
-    let r_y = t1 + t2;
+    let t2 = Bn254::pairing(p_s, vk.gamma_g2.into_group() * r);
+    let y_s_r = t1 + t2;
 
-    let mut ry_bytes = Vec::new();
-    r_y.serialize_compressed(&mut ry_bytes).ok()?;
-    let mask = ro_from_pairing_bytes(&ry_bytes, msg.len());
-    let ct3 = msg.iter().zip(mask.iter()).map(|(a, b)| a ^ b).collect();
+    let q_b = Bn254::pairing(r_b, vk.gamma_g2);
+    let mask_gt = y_s_r - q_b;
 
-    Some(WeKnownPi1SetupCt { ct2_r_delta_g2: g2_to_ser(r_delta), ct3_masked_msg: ct3 })
+    let mut mask_bytes = Vec::new();
+    mask_gt.serialize_compressed(&mut mask_bytes).ok()?;
+    let mask = ro_from_pairing_bytes(&mask_bytes, msg.len());
+    let ct3: Vec<u8> = msg.iter().zip(mask.iter()).map(|(a, b)| a ^ b).collect();
+
+    Some((WeKnownPi1SetupCt { ct2_r_delta_g2: g2_to_ser(r_delta), ct3_masked_msg: ct3 }, r_b.into_affine()))
 }
 
 /// Encprove(crs, π₁; r): ctprove = r·π₁.
@@ -362,20 +383,27 @@ pub fn we_known_pi1_encprove(pi1: ark_bn254::G1Projective, r_bytes: [u8; 32]) ->
     WeKnownPi1ProveCt { ct1_r_pi1: g1_to_ser(pi1 * r) }
 }
 
-/// Dec(ctsetup, ctprove, π₂, π₃): msg = ct3 ⊕ RO(e(ct1,π₂) - e(π₃,ct2)).
+/// Dec*(vk, ctsetup, ctprove, c1', π₂, π₃):
+///   Q_blind = e(c1', γ)  where c1' = r·P_D + r·B (DSGC output)
+///   mask = e(r·π₁, π₂) - e(π₃, r·δ) - Q_blind  =  Y_S^r - e(r·B, γ)
 pub fn we_known_pi1_dec(
+    vk: &Groth16VerifyingKey<Bn254>,
     ctsetup: &WeKnownPi1SetupCt,
     ctprove: &WeKnownPi1ProveCt,
+    c1_prime: G1Affine,
     pi2: ark_bn254::G2Projective,
     pi3: ark_bn254::G1Projective,
 ) -> Option<Vec<u8>> {
     let ct1 = g1_from_ser_checked(&ctprove.ct1_r_pi1)?;
     let ct2 = g2_from_ser_checked(&ctsetup.ct2_r_delta_g2)?;
-    let r_y = Bn254::pairing(ct1, pi2) - Bn254::pairing(pi3, ct2);
 
-    let mut ry_bytes = Vec::new();
-    r_y.serialize_compressed(&mut ry_bytes).ok()?;
-    let mask = ro_from_pairing_bytes(&ry_bytes, ctsetup.ct3_masked_msg.len());
+    let r_y = Bn254::pairing(ct1, pi2) - Bn254::pairing(pi3, ct2);
+    let q_blind = Bn254::pairing(c1_prime, vk.gamma_g2);
+    let mask_gt = r_y - q_blind;
+
+    let mut mask_bytes = Vec::new();
+    mask_gt.serialize_compressed(&mut mask_bytes).ok()?;
+    let mask = ro_from_pairing_bytes(&mask_bytes, ctsetup.ct3_masked_msg.len());
     Some(ctsetup.ct3_masked_msg.iter().zip(mask.iter()).map(|(a, b)| a ^ b).collect())
 }
 
@@ -393,7 +421,8 @@ pub fn run_babe_e2e_cac() -> BabeCACE2ERun {
         DummyMulCircuit::<Fr> { a: Some(a), b: Some(b) },
         &mut rng,
     ).expect("groth16 prove");
-    let public_inputs = vec![a * b];
+    let static_public_inputs = vec![a * b];
+    let dynamic_public_inputs = vec![a * a];
 
     // ── Setup phase ───────────────────────────────────────────────────────────
 
@@ -406,7 +435,7 @@ pub fn run_babe_e2e_cac() -> BabeCACE2ERun {
     println!("Verifier generating BTC keys");
     let pk_v = BtcPk([1u8; 33]);
     println!("Verifier: building {} instances...", N_CC);
-    let (verifier, package) = babe_verifier_cac_setup(&vk, &public_inputs);
+    let (verifier, package) = babe_verifier_cac_setup(&vk, &static_public_inputs, dynamic_public_inputs.len());
     // Verifier sends vk and package to Prover
     println!("Verifier: sending pk_v and {} instance commitment to Prover", N_CC);
 
@@ -421,7 +450,7 @@ pub fn run_babe_e2e_cac() -> BabeCACE2ERun {
 
     println!("Prover: verifying opening and soldering proof...");
     // Prover verifies everything.
-    babe_prover_verify_setup(&package, &opened, &finalized, &soldering, &vk, &public_inputs)
+    babe_prover_verify_setup(&package, &opened, &finalized, &soldering, &vk, &static_public_inputs, dynamic_public_inputs.len())
         .expect("prover setup verification failed");
 
     println!("Prover: generating Lamport signature...");
@@ -527,7 +556,9 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for DummyMulCircuit<F> {
         let a = cs.new_witness_variable(|| self.a.ok_or(SynthesisError::AssignmentMissing))?;
         let b = cs.new_witness_variable(|| self.b.ok_or(SynthesisError::AssignmentMissing))?;
         let c = cs.new_input_variable(|| Ok(self.a.unwrap() * self.b.unwrap()))?;
+        let d = cs.new_input_variable(|| Ok(self.a.unwrap() * self.a.unwrap()))?;
         cs.enforce_constraint(lc!() + a, lc!() + b, lc!() + c)?;
+        cs.enforce_constraint(lc!() + a, lc!() + a, lc!() + d)?;
         Ok(())
     }
 }
@@ -574,13 +605,29 @@ mod tests {
             DummyMulCircuit::<Fr> { a: Some(a), b: Some(b) },
             &mut rng,
         ).unwrap();
-        let public_inputs = vec![a * b];
+
+        // |S|=1 (a*b is static), |D|=1 (a*a is dynamic).
+        let static_inputs = vec![a * b];
+        let dyn_inputs = vec![a * a];
+        let num_dynamic = 1usize;
         let secret = b"test-secret-32by";
         let r_bytes = h_256(b"r-test");
+        let b_blind = G1Affine::generator();
 
-        let ct_setup = we_known_pi1_encsetup(&vk, &public_inputs, secret, r_bytes).unwrap();
+        let (ct_setup, r_b_affine) = we_known_pi1_encsetup(
+            &vk, &static_inputs, num_dynamic, secret, r_bytes, b_blind,
+        ).unwrap();
         let ctprove = we_known_pi1_encprove(proof.a.into_group(), r_bytes);
-        let decrypted = we_known_pi1_dec(&ct_setup, &ctprove, proof.b.into_group(), proof.c.into_group()).unwrap();
+
+        // Simulate DSGC: c1' = r·P_D + r·B
+        // P_D = (a*a) · gamma_abc[|S|+1] = (a*a) · gamma_abc[2]
+        let r = Fr::from_le_bytes_mod_order(&r_bytes);
+        let p_d = vk.gamma_abc_g1[2].into_group() * dyn_inputs[0];
+        let c1_prime = (p_d * r + r_b_affine.into_group()).into_affine();
+
+        let decrypted = we_known_pi1_dec(
+            &vk, &ct_setup, &ctprove, c1_prime, proof.b.into_group(), proof.c.into_group(),
+        ).unwrap();
         assert_eq!(decrypted, secret);
     }
 }

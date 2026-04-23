@@ -1,4 +1,5 @@
 use ark_bn254::{Fq, Fr, G1Affine};
+use ark_ec::AffineRepr;
 use ark_ff::{UniformRand, Zero};
 use garbled_snark_verifier::bag::S;
 use rand::SeedableRng;
@@ -15,6 +16,8 @@ pub struct InstanceSecrets {
     pub constant_0labels: [S; 2],
     pub rhos:          Vec<G1Affine>,
     pub fq_deltas:     Vec<Fq>,
+    /// Blinding point r·B baked into the DSGC circuit.
+    pub r_b:           G1Affine,
 }
 
 impl InstanceSecrets {
@@ -58,6 +61,10 @@ impl InstanceSecrets {
             })
             .collect();
 
-        Self { delta, r, msg, encoding_keys, constant_0labels, rhos, fq_deltas }
+        let b_blind = G1Affine::rand(&mut rng);
+        use ark_ec::CurveGroup;
+        let r_b = (b_blind.into_group() * r).into_affine();
+
+        Self { delta, r, msg, encoding_keys, constant_0labels, rhos, fq_deltas, r_b }
     }
 }
