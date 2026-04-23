@@ -276,7 +276,7 @@ mod tests {
         let dynamic_public_inputs = vec![a * a];
 
         // 2. Verifier enc_setup.
-        let mut verifier = BABEInstance::new_from_seed(
+        let verifier = BABEInstance::new_from_seed(
             rand::random(),
             &vk,
             &static_public_inputs,

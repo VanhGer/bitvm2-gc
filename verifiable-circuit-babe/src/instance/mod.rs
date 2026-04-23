@@ -1,4 +1,4 @@
-use ark_bn254::{Fr, G1Affine};
+use ark_bn254::Fr;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ec::pairing::Pairing;
 use ark_ff::UniformRand;
@@ -37,8 +37,6 @@ impl BABEInstance {
         dynamic_pin_size: usize,
     ) -> Result<Self, String> {
         use ark_bn254::G1Projective;
-        use ark_ff::Zero;
-        use crate::dre::matrices::u_bar_vec;
 
         let num_static = static_inputs.len();
         if num_static + dynamic_pin_size + 1 != vk.gamma_abc_g1.len() {
@@ -49,6 +47,7 @@ impl BABEInstance {
 
         // Load fresh circuit structure from pre-serialized files; drop after use.
         let (mut circuit, gc_output_indices) = crate::gc::read_fresh_circuit();
+
 
         // Apply encoding keys as 0-labels for evaluator input wires (pi_x, pi_y, x_d).
         for (i, &key) in secrets.encoding_keys.iter().enumerate() {
@@ -108,15 +107,12 @@ impl BABEInstance {
 
         // Recover label0 for each output wire.
         let delta = secrets.delta;
-        let u_bar_pi1 = u_bar_vec(&pi1);
         let output_labels: Vec<[u8; 16]> = gc_output_indices
             .iter()
-            .zip(u_bar_pi1.iter())
-            .flat_map(|(idx, u)| {
-                let current = circuit.0[*idx]
+            .flat_map(|idx| {
+                let label_0 = circuit.0[*idx]
                     .borrow()
                     .select_with_delta(circuit.0[*idx].borrow().get_value(), delta);
-                let label_0 = if u.is_zero() { current } else { current ^ delta };
                 [label_0.0, (label_0 ^ delta).0]
             })
             .collect();
@@ -254,7 +250,7 @@ mod tests {
         let static_inputs = vec![a * b];
         let dynamic_pin_size = 1usize;
 
-        let mut instance = BABEInstance::new_from_seed(42, &vk, &static_inputs, dynamic_pin_size)
+        let instance = BABEInstance::new_from_seed(42, &vk, &static_inputs, dynamic_pin_size)
             .expect("new_from_seed");
 
         let r = instance.secrets.r;
