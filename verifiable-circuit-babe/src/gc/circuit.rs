@@ -8,52 +8,49 @@ use garbled_snark_verifier::dv_bn254::g1::G1Projective as GcG1Projective;
 
 use crate::dre::{L, N, U_BAR_SIZE};
 
-// Signed-digit scalar-mul parameters. Must match the `SIGNED_SCALAR_*` constants in
-// garbled-snark-verifier's dv_bn254::g1. With w=8 we do ≤ 33 mixed-adds over a
-// half-sized (128-entry) precomputed table; the halved MUX saves ~6M AND vs the
-// unsigned w=8 version. Digits d_i ∈ [-128, 127] are produced offline via
-// `booth_recode_w8`; each window carries 7 index + 1 sign + 1 skip = 9 bits.
+// Unsigned 8-bit windowed scalar-mul parameters. Must match the `SCALAR_WINDOW_*`
+// constants in garbled-snark-verifier's dv_bn254::g1. With w=8 we do 32 mixed-adds
+// over a full 256-entry precomputed table. x_d is supplied as plain Fr bits (LSB-first).
 pub const WINDOW_BITS: usize = 8;
-pub const WINDOW_COUNT: usize = (Fr::N_BITS + WINDOW_BITS - 1) / WINDOW_BITS + 1; // +1 for Booth carry
-pub const WINDOW_ENTRIES: usize = 1 << (WINDOW_BITS - 1); // halved: 128
-pub const DIGIT_BITS: usize = WINDOW_BITS + 1; // 7 idx + 1 sign + 1 skip
+pub const WINDOW_COUNT: usize = (Fr::N_BITS + WINDOW_BITS - 1) / WINDOW_BITS; // 32
+pub const WINDOW_ENTRIES: usize = 1 << WINDOW_BITS; // 256
 pub const PRECOMP_TABLE_BITS: usize = WINDOW_COUNT * WINDOW_ENTRIES * 2 * N;
-pub const DIGIT_TOTAL_BITS: usize = WINDOW_COUNT * DIGIT_BITS;
+pub const CONSTANT_SIZE: usize = 2 + 2 * N + PRECOMP_TABLE_BITS;
 
 /// Compile the DSGC circuit structure without fixing witness values.
 ///
 /// Input wire allocation order:
 ///   [0..N)                       pi_x — x-coordinate of the proof point π
 ///   [N..2·N)                     pi_y — y-coordinate of π
-///   [2·N..3·N)                   r·B_x — x-coordinate of blinding point, Montgomery form
-///   [3N..4·N)                     r·B_y — y-coordinate of blinding point, Montgomery form
-///   [4·N..4·N+PRECOMP_TABLE_BITS) signed-digit precomputed table for Base,
+///   [2·N..2·N+Fr::N_BITS)        x_d — raw scalar bits, LSB-first (evaluator input)
+///   [2·N+Fr::N_BITS..3·N+Fr::N_BITS)   r·B_x — x-coordinate of blinding point, Montgomery form
+///   [..+N)                       r·B_y — y-coordinate of blinding point, Montgomery form
+///   [..+PRECOMP_TABLE_BITS)      unsigned w=8 table for Base,
 ///                                WINDOW_COUNT windows × WINDOW_ENTRIES affine points
-///                                (entry j = (j+1)·256^i·P), Montgomery form
-///   [..+DIGIT_TOTAL_BITS)        x_d recoded into Booth digits, 9 bits per window
+///                                (entry j = j·256^i·P), Montgomery form; j=0 is infinity
 ///
 pub fn compile_dsgc(g: G1Affine) -> (CircuitAdapter, Vec<usize>) {
     let mut bld = CircuitAdapter::default();
 
-    // π input wires
+    // π input wires (evaluator)
     let pi_x = Fq::wires(&mut bld);
     let pi_y = Fq::wires(&mut bld);
 
-    // r·B input wires — garbler-private, placed before table wires.
+    // x_d raw scalar bits (evaluator input)
+    let x_d: Vec<usize> = (0..Fr::N_BITS).map(|_| bld.fresh_one()).collect();
+
+    // r·B and precomputed table — garbler-private
     let rb_x = Fq::wires(&mut bld);
     let rb_y = Fq::wires(&mut bld);
     let mut table_wires = Vec::with_capacity(PRECOMP_TABLE_BITS);
     for _ in 0..(WINDOW_COUNT * WINDOW_ENTRIES * 2) {
         table_wires.extend(Fq::wires(&mut bld).0);
     }
-    // Signed-digit encoding of x_d (33 × 9 = 297 bits)
-    let digit_wires: Vec<usize> = (0..DIGIT_TOTAL_BITS).map(|_| bld.fresh_one()).collect();
-
 
     let output_indices = emit_dsgc(
         &mut bld,
         &table_wires,
-        &digit_wires,
+        &x_d,
         &pi_x.0,
         &pi_y.0,
         g,
@@ -72,7 +69,7 @@ pub const R_B_BITS: usize = 2 * N;
 fn emit_dsgc(
     bld: &mut CircuitAdapter,
     table_wires: &[usize],
-    digits: &[usize],
+    x_d: &[usize],
     pi_x: &[usize],
     pi_y: &[usize],
     g: G1Affine,
@@ -118,9 +115,9 @@ fn emit_dsgc(
         .map(|k| selector(bld, pi_u_bar[k], g_u_bar[k], on_curve))
         .collect();
 
-    // ── x_d · Base subcircuit (garbler-private signed-digit windowed table) ────
+    // ── x_d · Base subcircuit (unsigned 8-bit windowed private table) ─────────
     let prod_proj_m =
-        GcG1Projective::scalar_mul_private_signed_table_circuit(bld, digits, table_wires);
+        GcG1Projective::scalar_mul_private_table_circuit(bld, x_d, table_wires);
 
     // ── Blinding: add r·B (garbler-private affine, already in Montgomery form) ─
     let mut rb_affine_m: Vec<usize> = rb_x_wires.to_vec();
@@ -159,59 +156,6 @@ fn g_u_bar_indices(bld: &mut CircuitAdapter, g: G1Affine) -> Vec<usize> {
     indices
 }
 
-/// Booth-recode `k` into `WINDOW_COUNT` signed digits d_i ∈ [-128, 127] satisfying
-/// `Σ_i d_i · 256^i ≡ k  (mod r)`. The extra window absorbs the final carry.
-pub fn booth_recode_w8(k: ark_bn254::Fr) -> Vec<i32> {
-    use ark_ff::{BigInteger, PrimeField};
-    let scalar_bits = k.into_bigint().to_bits_le();
-
-    let mut digits = Vec::with_capacity(WINDOW_COUNT);
-    let mut carry: i32 = 0;
-    for i in 0..WINDOW_COUNT {
-        let mut byte: i32 = 0;
-        for b in 0..WINDOW_BITS {
-            let idx = i * WINDOW_BITS + b;
-            if idx < scalar_bits.len() && scalar_bits[idx] {
-                byte |= 1 << b;
-            }
-        }
-        let mut d = byte + carry;
-        if d >= (1 << (WINDOW_BITS - 1)) {
-            d -= 1 << WINDOW_BITS;
-            carry = 1;
-        } else {
-            carry = 0;
-        }
-        digits.push(d);
-    }
-    debug_assert_eq!(carry, 0, "booth_recode_w8: residual carry did not fit in WINDOW_COUNT digits");
-    digits
-}
-
-/// Encode a signed-digit sequence into the 9-bits-per-window witness layout consumed by
-/// `scalar_mul_private_signed_table_circuit`: `[idx_0 .. idx_{w-2}][sign][skip]`.
-pub fn encode_signed_digits(digits: &[i32]) -> Vec<bool> {
-    let mut bits = Vec::with_capacity(digits.len() * DIGIT_BITS);
-    for &d in digits {
-        if d == 0 {
-            for _ in 0..(WINDOW_BITS - 1) {
-                bits.push(false);
-            }
-            bits.push(false);
-            bits.push(true);
-        } else {
-            let mag = d.unsigned_abs(); // |d| in [1, 128]
-            let idx = mag - 1; // in [0, 127], fits in 7 bits
-            for b in 0..(WINDOW_BITS - 1) {
-                bits.push((idx >> b) & 1 != 0);
-            }
-            bits.push(d < 0);
-            bits.push(false);
-        }
-    }
-    bits
-}
-
 /// SHA256 commitment to a `Vec<Option<S>>` GC ciphertext list.
 pub fn gc_ciphertexts_commit(ciphertexts: &[Option<garbled_snark_verifier::bag::S>]) -> [u8; 32] {
     let mut hasher = Sha256::new();
@@ -240,16 +184,16 @@ mod tests {
         ark_bn254::G1Projective::rand(&mut rng).into_affine()
     }
 
-    /// Build the halved signed-digit Base table.
+    /// Build the unsigned w=8 Base table.
     ///
     /// Layout: window `i` (i = 0..WINDOW_COUNT), entry `j` (j = 0..WINDOW_ENTRIES) stores
-    /// `(j+1) · 256^i · Base` in affine Montgomery form.
+    /// `j · 256^i · Base` in affine Montgomery form. Entry j=0 is the point at infinity.
     fn build_base_table_bits(base: &G1Affine) -> Vec<bool> {
         let mut bits = Vec::with_capacity(PRECOMP_TABLE_BITS);
         let mut window_base = ark_bn254::G1Projective::from(base.clone());
 
         for _ in 0..WINDOW_COUNT {
-            let mut multiple = window_base; // start at 1·window_base
+            let mut multiple = ark_bn254::G1Projective::zero(); // j=0: infinity
             for _ in 0..WINDOW_ENTRIES {
                 let aff = multiple.into_affine();
                 bits.extend(Fq::to_bits(Fq::as_montgomery(aff.x)));
@@ -264,17 +208,14 @@ mod tests {
         bits
     }
 
-    /// Build a full witness: r·B (garbler-private blinding point in Montgomery form),
-    /// precomputed signed table for P_D, Booth-recoded x_d, pi_x, pi_y.
+    /// Build a full witness: pi_x, pi_y, x_d raw bits, r·B (Montgomery), precomputed table.
     fn build_witness(pi: &G1Affine, base: &G1Affine, x_d: ark_bn254::Fr, r_b: &G1Affine) -> Vec<bool> {
-        let digits = booth_recode_w8(x_d);
-
         Fq::to_bits(pi.x).into_iter()
             .chain(Fq::to_bits(pi.y))
+            .chain(Fr::to_bits(x_d))
             .chain(Fq::to_bits(Fq::as_montgomery(r_b.x)))
             .chain(Fq::to_bits(Fq::as_montgomery(r_b.y)))
             .chain(build_base_table_bits(base))
-            .chain(encode_signed_digits(&digits))
             .collect()
     }
 
@@ -438,9 +379,9 @@ mod tests {
         println!("circuit generate time: {:?}", now.elapsed());
 
         // 2. Generate a new set of labels — one label0 per input wire.
-        // Input wires: R_B_BITS (r·B) + PRECOMP_TABLE_BITS (table) + DIGIT_TOTAL_BITS (x_d) + 2·N (π)
+        // Input wires: 2·N (π) + Fr::N_BITS (x_d) + R_B_BITS (r·B) + PRECOMP_TABLE_BITS (table)
         let now = Instant::now();
-        let total_input_wires = R_B_BITS + PRECOMP_TABLE_BITS + DIGIT_TOTAL_BITS + 2 * N;
+        let total_input_wires = 2 * N + Fr::N_BITS + R_B_BITS + PRECOMP_TABLE_BITS;
         let encoding_keys: Vec<S> = (0..total_input_wires).map(|_| S::random()).collect();
         for (i, &key) in encoding_keys.iter().enumerate() {
             circuit.0[2 + i].borrow_mut().label = Some(key);

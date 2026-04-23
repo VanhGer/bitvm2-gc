@@ -429,24 +429,22 @@ impl G1Projective {
         res
     }
 
-    /// Signed-digit scalar multiplication with a garbler-private halved affine table.
+    /// Unsigned 8-bit windowed scalar multiplication with a garbler-private full affine table.
     ///
-    /// `digits` — Per window (9 bits): `[idx_0 .. idx_{w-2}][sign][skip]`, LSB-first indices.
-    ///   * `idx` (7 bits) selects entry `j` ∈ [0, 127] from the table.
-    ///   * `sign` = 1 applies y → −y (digit is negative).
-    ///   * `skip` = 1 means the digit is zero (omit the add for this window).
-    ///
-    /// `table` — `SIGNED_SCALAR_WINDOW_COUNT * SIGNED_SCALAR_WINDOW_ENTRIES` affine points.
-    ///   Window `i`, entry `j` represents `(j+1) · (256^i) · P` in affine Montgomery.
-    pub fn scalar_mul_private_signed_table_circuit<T: CircuitTrait>(
+    /// `scalar` — 254 wire indices, raw (non-Montgomery) bits, LSB-first.
+    /// `table`  — `SCALAR_WINDOW_COUNT` windows of `SCALAR_WINDOW_ENTRIES` affine points,
+    ///            each encoded as Montgomery wires (x·R, y·R).
+    ///            Window `w`, entry `j` represents `j * (256^w * P)` in affine form.
+    ///            Entry j=0 is the point at infinity (addition skipped via window_nonzero guard).
+    pub fn scalar_mul_private_table_circuit<T: CircuitTrait>(
         bld: &mut T,
-        digits: &[usize],
+        scalar: &[usize],
         table: &[usize],
     ) -> Vec<usize> {
-        assert_eq!(digits.len(), SIGNED_SCALAR_WINDOW_COUNT * SIGNED_DIGIT_BITS);
+        assert_eq!(scalar.len(), Fr::N_BITS);
         assert_eq!(
             table.len(),
-            SIGNED_SCALAR_WINDOW_COUNT * SIGNED_SCALAR_WINDOW_ENTRIES * G1_AFFINE_LEN
+            SCALAR_WINDOW_COUNT * SCALAR_WINDOW_ENTRIES * G1_AFFINE_LEN
         );
 
         let z_one = Fq::wires_set(bld, Fq::as_montgomery(ark_bn254::Fq::from(1u64))).0.to_vec();
@@ -454,72 +452,56 @@ impl G1Projective {
             bld,
             G1Projective::as_montgomery(ark_bn254::G1Projective::default()),
         )
-            .to_vec_wires();
+        .to_vec_wires();
 
         let mut acc: Vec<usize> = inf_wires.clone();
         let mut acc_is_inf: usize = bld.one();
+        let zero_wire = bld.zero();
 
-        for w in 0..SIGNED_SCALAR_WINDOW_COUNT {
-            // ─── extract digit bits for this window ─────────────────────────
-            let digit_base = w * SIGNED_DIGIT_BITS;
-            let idx_bits: Vec<usize> = (0..(SIGNED_SCALAR_WINDOW_BITS - 1))
-                .map(|k| digits[digit_base + k])
-                .collect();
-            let sign_bit = digits[digit_base + SIGNED_SCALAR_WINDOW_BITS - 1];
-            let skip_bit = digits[digit_base + SIGNED_SCALAR_WINDOW_BITS];
+        let bit = |i: usize| -> usize {
+            if i < Fr::N_BITS { scalar[i] } else { zero_wire }
+        };
 
-            // ─── 128-wide MUX on 7 idx bits ─────────────────────────────────
-            let window_base = w * SIGNED_SCALAR_WINDOW_ENTRIES * G1_AFFINE_LEN;
-            let ws =
-                &table[window_base..window_base + SIGNED_SCALAR_WINDOW_ENTRIES * G1_AFFINE_LEN];
+        for w in 0..SCALAR_WINDOW_COUNT {
+            let base = w * SCALAR_WINDOW_BITS;
+            let sel: Vec<usize> = (0..SCALAR_WINDOW_BITS).map(|k| bit(base + k)).collect();
 
-            let tab_x: Vec<Vec<usize>> = (0..SIGNED_SCALAR_WINDOW_ENTRIES)
+            // window_nonzero = OR of all 8 selector bits
+            let mut window_nonzero = sel[0];
+            for &b in &sel[1..] {
+                window_nonzero = bld.or_wire(window_nonzero, b);
+            }
+
+            let window_base = w * SCALAR_WINDOW_ENTRIES * G1_AFFINE_LEN;
+            let ws = &table[window_base..window_base + SCALAR_WINDOW_ENTRIES * G1_AFFINE_LEN];
+
+            let tab_x: Vec<Vec<usize>> = (0..SCALAR_WINDOW_ENTRIES)
                 .map(|i| ws[i * G1_AFFINE_LEN..i * G1_AFFINE_LEN + FQ_LEN].to_vec())
                 .collect();
-            let tab_y: Vec<Vec<usize>> = (0..SIGNED_SCALAR_WINDOW_ENTRIES)
-                .map(|i| {
-                    ws[i * G1_AFFINE_LEN + FQ_LEN..(i + 1) * G1_AFFINE_LEN].to_vec()
-                })
+            let tab_y: Vec<Vec<usize>> = (0..SCALAR_WINDOW_ENTRIES)
+                .map(|i| ws[i * G1_AFFINE_LEN + FQ_LEN..(i + 1) * G1_AFFINE_LEN].to_vec())
                 .collect();
 
-            let affine_x = Fq::multiplexer(bld, &tab_x, &idx_bits, SIGNED_SCALAR_WINDOW_BITS - 1);
-            let affine_y = Fq::multiplexer(bld, &tab_y, &idx_bits, SIGNED_SCALAR_WINDOW_BITS - 1);
-            // Conditional y-negation (sign bit → returns −y if sign=1, else y).
-            let affine_y_signed = Fq::negate_with_selector(bld, &affine_y, sign_bit);
+            let affine_x = Fq::multiplexer(bld, &tab_x, &sel, SCALAR_WINDOW_BITS);
+            let affine_y = Fq::multiplexer(bld, &tab_y, &sel, SCALAR_WINDOW_BITS);
 
             let mut affine = Vec::with_capacity(G1_AFFINE_LEN);
             affine.extend_from_slice(&affine_x);
-            affine.extend_from_slice(&affine_y_signed);
+            affine.extend_from_slice(&affine_y);
 
             let mut affine_proj = Vec::with_capacity(G1_PROJECTIVE_LEN);
             affine_proj.extend_from_slice(&affine_x);
-            affine_proj.extend_from_slice(&affine_y_signed);
+            affine_proj.extend_from_slice(&affine_y);
             affine_proj.extend_from_slice(&z_one);
 
-            if w == 0 {
-                // Unrolled first window: init acc directly from affine_proj (Z=1) when not skipped.
-                let not_skip = not(bld, skip_bit);
-                acc = Self::selector_projective_montgomery(
-                    bld,
-                    &affine_proj,
-                    &inf_wires,
-                    not_skip,
-                );
-                acc_is_inf = skip_bit;
-            } else {
-                let mixed = Self::add_mixed_montgomery_no_inf(bld, &acc, &affine);
+            let mixed = Self::add_mixed_montgomery_no_inf(bld, &acc, &affine);
 
-                let candidate = Self::selector_projective_montgomery(
-                    bld,
-                    &affine_proj,
-                    &mixed,
-                    acc_is_inf,
-                );
-                let not_skip = not(bld, skip_bit);
-                acc = Self::selector_projective_montgomery(bld, &candidate, &acc, not_skip);
+            let candidate =
+                Self::selector_projective_montgomery(bld, &affine_proj, &mixed, acc_is_inf);
+            acc = Self::selector_projective_montgomery(bld, &candidate, &acc, window_nonzero);
 
-                acc_is_inf = bld.and_wire(acc_is_inf, skip_bit);
-            }
+            let not_nonzero = not(bld, window_nonzero);
+            acc_is_inf = bld.and_wire(acc_is_inf, not_nonzero);
         }
 
         acc
