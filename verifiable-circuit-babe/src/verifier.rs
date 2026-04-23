@@ -27,8 +27,12 @@ impl BABEVerifier {
         let instances = seeds
             .par_iter()
             .map(|&seed| {
-                let mut inst = BABEInstance::new_from_seed(seed);
-                inst.enc_setup(vk, static_public_inputs, dynamic_pin_size)?;
+                let inst = BABEInstance::new_from_seed(
+                    seed,
+                    vk,
+                    static_public_inputs,
+                    dynamic_pin_size
+                )?;
                 Ok::<BABEInstance, String>(inst)
             })
             .collect::<Vec<_>>()
@@ -66,7 +70,7 @@ impl BABEVerifier {
         for &i in finalized_indices {
             let inst = &self.instances[i];
             let constant_labels =
-            [inst.secrets.constant_0labels[0], inst.secrets.constant_0labels[1] ^ inst.secrets.delta];
+            [inst.secrets.constant_val_labels[0], inst.secrets.constant_val_labels[1] ^ inst.secrets.delta];
             finalized.push(crate::cac::FinalizedInstanceData {
                 index: i,
                 gc_ciphertexts: inst.ciphertexts.clone(),

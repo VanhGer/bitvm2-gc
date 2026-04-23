@@ -71,9 +71,12 @@ pub fn verify_opened_instances(
     opened
         .par_iter()
         .map(|&(idx, seed)| {
-            let mut inst = BABEInstance::new_from_seed(seed);
-            inst.enc_setup(vk, static_public_inputs, dynamic_pin_size)
-                .map_err(|e| format!("instance {idx}: enc_setup failed: {e}"))?;
+            let inst = BABEInstance::new_from_seed(
+                seed,
+                vk,
+                static_public_inputs,
+                dynamic_pin_size
+            )?;
 
             let recomputed = inst.commit();
             let committed = &package.commits[idx];

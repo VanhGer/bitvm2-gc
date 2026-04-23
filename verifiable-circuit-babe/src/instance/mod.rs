@@ -2,13 +2,17 @@ use ark_bn254::{Fr, G1Affine};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ec::pairing::Pairing;
 use ark_ff::UniformRand;
-use garbled_snark_verifier::bag::S;
+use garbled_snark_verifier::bag::{Circuit, S};
 use garbled_snark_verifier::circuits::bn254::fq::Fq;
 use crate::babe::WeKnownPi1SetupCt;
-use crate::gc::SparseAdaptorTable;
+use crate::gc::{build_base_table_bits, SparseAdaptorTable, CONSTANT_SIZE};
 use crate::instance::secret::InstanceSecrets;
 use ark_groth16::VerifyingKey as Groth16VerifyingKey;
 use ark_serialize::CanonicalSerialize;
+use garbled_snark_verifier::dv_bn254::fp254impl::Fp254Impl;
+use garbled_snark_verifier::dv_bn254::fq::Fq as DvFq;
+use garbled_snark_verifier::dv_bn254::fr::Fr as DvFr;
+use crate::dre::N;
 use crate::instance::commit::CACInstanceCommit;
 use crate::utils::{g2_to_ser, ro_from_pairing_bytes};
 
@@ -24,30 +28,77 @@ pub struct BABEInstance {
 }
 
 impl BABEInstance {
-    /// Construct a BABE instance fully determined by `seed`.
+    /// Construct a instance fully determined by `seed`.
     /// W/O ct_setup.
-    pub fn new_from_seed(seed: u64) -> Self {
+    pub fn new_from_seed(
+        seed: u64,
+        vk: &Groth16VerifyingKey<ark_bn254::Bn254>,
+        static_inputs: &[Fr],
+        dynamic_pin_size: usize,
+    ) -> Result<Self, String> {
         use ark_bn254::G1Projective;
         use ark_ff::Zero;
         use crate::dre::matrices::u_bar_vec;
+
+        let num_static = static_inputs.len();
+        if num_static + dynamic_pin_size + 1 != vk.gamma_abc_g1.len() {
+            return Err("static/dynamic split does not match vk".to_string());
+        }
 
         let secrets = InstanceSecrets::new_from_seed(seed);
 
         // Load fresh circuit structure from pre-serialized files; drop after use.
         let (mut circuit, gc_output_indices) = crate::gc::read_fresh_circuit();
 
-        // Apply encoding keys and constant 0-labels to input wires.
-        circuit.0[0].borrow_mut().label = Some(secrets.constant_0labels[0]);
-        circuit.0[1].borrow_mut().label = Some(secrets.constant_0labels[1]);
+        // Apply encoding keys as 0-labels for evaluator input wires (pi_x, pi_y, x_d).
         for (i, &key) in secrets.encoding_keys.iter().enumerate() {
             circuit.0[2 + i].borrow_mut().label = Some(key);
         }
 
-        // Evaluate circuit at a random pi1 to obtain output labels.
+        // Compute r·L_i = r * sum(gamma_abc[num_static+1..]) and build the precomputed table.
+        let base = vk.gamma_abc_g1[num_static + 1..]
+            .iter()
+            .map(|p| (*p).into_group())
+            .sum::<G1Projective>() * secrets.r;
+        let table_bits = build_base_table_bits(&base.into_affine());
+
+        // Compute r·B bit representation (Montgomery form) for use as constant wires.
+        let rb_x_bits: Vec<bool> = DvFq::to_bits(DvFq::as_montgomery(secrets.r_b.x));
+        let rb_y_bits: Vec<bool> = DvFq::to_bits(DvFq::as_montgomery(secrets.r_b.y));
+
+        // Derive 0-labels for each constant wire from val-labels and actual wire values.
+        // constant_val_labels[i] is the label for the actual value of constant wire i:
+        //   if value = 0 → val_label IS the 0-label
+        //   if value = 1 → val_label IS the 1-label, so 0-label = val_label ^ delta
+        let delta = secrets.delta;
+        let mut constants_0labels = Vec::with_capacity(CONSTANT_SIZE);
+        constants_0labels.push(secrets.constant_val_labels[0]);           // wire 0: value = 0
+        constants_0labels.push(secrets.constant_val_labels[1] ^ delta);  // wire 1: value = 1
+        for (k, &bit) in rb_x_bits.iter().enumerate() {
+            let lv = secrets.constant_val_labels[2 + k];
+            constants_0labels.push(if bit { lv ^ delta } else { lv });
+        }
+        for (k, &bit) in rb_y_bits.iter().enumerate() {
+            let lv = secrets.constant_val_labels[2 + N + k];
+            constants_0labels.push(if bit { lv ^ delta } else { lv });
+        }
+        for (k, &bit) in table_bits.iter().enumerate() {
+            let lv = secrets.constant_val_labels[2 + 2 * N + k];
+            constants_0labels.push(if bit { lv ^ delta } else { lv });
+        }
+
+        BABEInstance::set_gc_const_labels(&mut circuit, &constants_0labels);
+
+        // Evaluate circuit at a random pi1 and random x_d to garble.
         let pi1 = G1Projective::rand(&mut rand::thread_rng()).into_affine();
+        let x_d = ark_bn254::Fr::rand(&mut rand::thread_rng());
         let witness: Vec<bool> = Fq::to_bits(pi1.x)
             .into_iter()
-            .chain(Fq::to_bits(pi1.y).into_iter())
+            .chain(Fq::to_bits(pi1.y))
+            .chain(DvFr::to_bits(x_d))
+            .chain(rb_x_bits)
+            .chain(rb_y_bits)
+            .chain(table_bits)
             .collect();
         circuit.set_witness_value(&witness);
         for gate in &mut circuit.1 {
@@ -77,39 +128,57 @@ impl BABEInstance {
             &secrets.fq_deltas,
         );
 
+        let ct_setup = Self::enc_setup(
+            &secrets,
+            vk,
+            static_inputs,
+            dynamic_pin_size,
+        )?;
+
         // circuit is dropped here — not stored in the instance.
 
-        Self {
+        Ok(Self {
             seed,
             secrets,
-            ct_setup: WeKnownPi1SetupCt { ct2_r_delta_g2: vec![], ct3_masked_msg: vec![] },
+            ct_setup,
             adaptor_table,
             ciphertexts,
+        })
+    }
+
+    pub fn set_gc_const_labels(
+        circuit: &mut Circuit,
+        constant_labels: &[S],
+    ) {
+        assert_eq!(constant_labels.len(), CONSTANT_SIZE);
+        circuit.0[0].borrow_mut().label = Some(constant_labels[0]);
+        circuit.0[1].borrow_mut().label = Some(constant_labels[1]);
+        for i in 2..CONSTANT_SIZE {
+            circuit.0[i + 2 * N + DvFr::N_BITS].borrow_mut().label = Some(constant_labels[i]);
         }
     }
 
     /// Enc*(crs, x_S, |D|, msg; r, r·B):
     ///   P_S = gamma_abc[0] + Σ_{k} x_S[k]·gamma_abc[k+1]
     ///   mask = Y_S^r - e(r·B, γ) where Y_S^r = e(α, r·β) + e(P_S, r·γ)
-    pub fn enc_setup(
-        &mut self,
+    fn enc_setup(
+        secrets: &InstanceSecrets,
         vk: &Groth16VerifyingKey<ark_bn254::Bn254>,
         static_inputs: &[Fr],
         dynamic_pin_size: usize,
-    ) -> Result<(), String> {
+    ) -> Result<WeKnownPi1SetupCt, String> {
         let num_static = static_inputs.len();
         if num_static + dynamic_pin_size + 1 != vk.gamma_abc_g1.len() {
             return Err("static/dynamic split does not match vk".to_string());
         }
 
-        let r = self.secrets.r;
-
+        let r = secrets.r;
         let mut p_s = vk.gamma_abc_g1[0].into_group();
         for (k, x) in static_inputs.iter().enumerate() {
             p_s += vk.gamma_abc_g1[k + 1].into_group() * *x;
         }
 
-        let r_b = self.secrets.r_b;
+        let r_b = secrets.r_b;
         let r_delta = vk.delta_g2.into_group() * r;
 
         let t1 = ark_bn254::Bn254::pairing(vk.alpha_g1, vk.beta_g2.into_group() * r);
@@ -121,16 +190,16 @@ impl BABEInstance {
 
         let mut mask_bytes = Vec::new();
         mask_gt.serialize_compressed(&mut mask_bytes).or(Err("Failed to serialize mask_bytes"))?;
-        let mask = ro_from_pairing_bytes(&mask_bytes, self.secrets.msg.len());
-        let ct3 = self.secrets.msg.iter().zip(mask.iter()).map(|(a, b)| a ^ b).collect::<Vec<_>>();
+        let mask = ro_from_pairing_bytes(&mask_bytes, secrets.msg.len());
+        let ct3 = secrets.msg.iter().zip(mask.iter()).map(|(a, b)| a ^ b).collect::<Vec<_>>();
 
-        self.ct_setup = WeKnownPi1SetupCt {
+        Ok(WeKnownPi1SetupCt {
             ct2_r_delta_g2: g2_to_ser(r_delta),
             ct3_masked_msg: ct3,
-        };
-        Ok(())
+        })
     }
 
+    // Todo: add x_d in this.
     /// Returns the input labels given the bits of pi1.
     pub fn compute_pi1_labels_based_on_value(&self, pi1: ark_bn254::G1Affine) -> Vec<S> {
         let x_bits = Fq::to_bits(pi1.x);
@@ -139,8 +208,8 @@ impl BABEInstance {
         let delta = self.secrets.delta;
 
         let mut labels = Vec::new();
-        labels.push(self.secrets.constant_0labels[0]);
-        labels.push(self.secrets.constant_0labels[1] ^ delta);
+        labels.push(self.secrets.constant_val_labels[0]);
+        labels.push(self.secrets.constant_val_labels[1] ^ delta);
         let tail: Vec<S> = witness.iter().enumerate().map(|(i, &b)| {
             let key = self.secrets.encoding_keys[i];
             if b { key ^ delta } else { key }
@@ -148,6 +217,7 @@ impl BABEInstance {
         labels.extend(tail);
         labels
     }
+
 
     pub fn commit(&self) -> CACInstanceCommit {
         CACInstanceCommit::from_instance(self)
@@ -184,8 +254,8 @@ mod tests {
         let static_inputs = vec![a * b];
         let dynamic_pin_size = 1usize;
 
-        let mut instance = BABEInstance::new_from_seed(42);
-        instance.enc_setup(&vk, &static_inputs, dynamic_pin_size).unwrap();
+        let mut instance = BABEInstance::new_from_seed(42, &vk, &static_inputs, dynamic_pin_size)
+            .expect("new_from_seed");
 
         let r = instance.secrets.r;
 

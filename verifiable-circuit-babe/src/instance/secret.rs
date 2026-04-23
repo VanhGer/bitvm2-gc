@@ -4,16 +4,20 @@ use ark_ff::{UniformRand, Zero};
 use garbled_snark_verifier::bag::S;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
+use garbled_snark_verifier::dv_bn254::fp254impl::Fp254Impl;
+use garbled_snark_verifier::dv_bn254::fr::Fr as DvFr;
 use crate::dre::{N, utils::sample_rhos};
+use crate::gc::CONSTANT_SIZE;
 
 pub struct InstanceSecrets {
     pub delta:         S,
     pub r:             Fr,
     pub msg:           [u8; 32],
-    /// label0 per input wire, size = 2 * N
+    /// label0 per input wire, size = 2 * N + Fr::N (3 * N)
     pub encoding_keys: Vec<S>,
-    /// Two constant-wire 0-labels
-    pub constant_0labels: [S; 2],
+    /// Constant value-based labels. For example, if constant x = 1
+    /// this contains 1-label of x. Size = CONSTANT_SIZE
+    pub constant_val_labels: Vec<S>,
     pub rhos:          Vec<G1Affine>,
     pub fq_deltas:     Vec<Fq>,
     /// Blinding point r·B baked into the DSGC circuit.
@@ -34,7 +38,7 @@ impl InstanceSecrets {
         let mut msg = [0u8; 32];
         rand::RngCore::fill_bytes(&mut rng, &mut msg);
 
-        let encoding_keys: Vec<S> = (0..2 * N)
+        let encoding_keys: Vec<S> = (0..2 * N + DvFr::N_BITS)
             .map(|_| {
                 let mut b = [0u8; 16];
                 rand::RngCore::fill_bytes(&mut rng, &mut b);
@@ -42,13 +46,13 @@ impl InstanceSecrets {
             })
             .collect();
 
-        let constant_0labels = {
-            let mut b0 = [0u8; 16];
-            let mut b1 = [0u8; 16];
-            rand::RngCore::fill_bytes(&mut rng, &mut b0);
-            rand::RngCore::fill_bytes(&mut rng, &mut b1);
-            [S(b0), S(b1)]
-        };
+        let constant_val_labels: Vec<S> = (0..CONSTANT_SIZE)
+            .map(|_| {
+                let mut b = [0u8; 16];
+                rand::RngCore::fill_bytes(&mut rng, &mut b);
+                S(b)
+            })
+            .collect();
 
         let rhos = sample_rhos(&mut rng);
 
@@ -65,6 +69,6 @@ impl InstanceSecrets {
         use ark_ec::CurveGroup;
         let r_b = (b_blind.into_group() * r).into_affine();
 
-        Self { delta, r, msg, encoding_keys, constant_0labels, rhos, fq_deltas, r_b }
+        Self { delta, r, msg, encoding_keys, constant_val_labels, rhos, fq_deltas, r_b }
     }
 }

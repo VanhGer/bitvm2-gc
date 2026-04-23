@@ -1,4 +1,6 @@
 use ark_bn254::G1Affine;
+use ark_ec::CurveGroup;
+use ark_ff::{AdditiveGroup, Zero};
 use sha2::{Digest, Sha256};
 use garbled_snark_verifier::circuits::sect233k1::builder::{CircuitAdapter, CircuitTrait};
 use garbled_snark_verifier::dv_bn254::basic::selector;
@@ -168,6 +170,30 @@ pub fn gc_ciphertexts_commit(ciphertexts: &[Option<garbled_snark_verifier::bag::
     hasher.finalize().into()
 }
 
+/// Build the unsigned w=8 Base table.
+///
+/// Layout: window `i` (i = 0..WINDOW_COUNT), entry `j` (j = 0..WINDOW_ENTRIES) stores
+/// `j · 256^i · Base` in affine Montgomery form. Entry j=0 is the point at infinity.
+pub fn build_base_table_bits(base: &G1Affine) -> Vec<bool> {
+    let mut bits = Vec::with_capacity(PRECOMP_TABLE_BITS);
+    let mut window_base = ark_bn254::G1Projective::from(base.clone());
+
+    for _ in 0..WINDOW_COUNT {
+        let mut multiple = ark_bn254::G1Projective::zero(); // j=0: infinity
+        for _ in 0..WINDOW_ENTRIES {
+            let aff = multiple.into_affine();
+            bits.extend(Fq::to_bits(Fq::as_montgomery(aff.x)));
+            bits.extend(Fq::to_bits(Fq::as_montgomery(aff.y)));
+            multiple += window_base;
+        }
+
+        for _ in 0..WINDOW_BITS {
+            window_base.double_in_place();
+        }
+    }
+    bits
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Instant;
@@ -182,30 +208,6 @@ mod tests {
     fn random_g1_affine() -> G1Affine {
         let mut rng = rand::thread_rng();
         ark_bn254::G1Projective::rand(&mut rng).into_affine()
-    }
-
-    /// Build the unsigned w=8 Base table.
-    ///
-    /// Layout: window `i` (i = 0..WINDOW_COUNT), entry `j` (j = 0..WINDOW_ENTRIES) stores
-    /// `j · 256^i · Base` in affine Montgomery form. Entry j=0 is the point at infinity.
-    fn build_base_table_bits(base: &G1Affine) -> Vec<bool> {
-        let mut bits = Vec::with_capacity(PRECOMP_TABLE_BITS);
-        let mut window_base = ark_bn254::G1Projective::from(base.clone());
-
-        for _ in 0..WINDOW_COUNT {
-            let mut multiple = ark_bn254::G1Projective::zero(); // j=0: infinity
-            for _ in 0..WINDOW_ENTRIES {
-                let aff = multiple.into_affine();
-                bits.extend(Fq::to_bits(Fq::as_montgomery(aff.x)));
-                bits.extend(Fq::to_bits(Fq::as_montgomery(aff.y)));
-                multiple += window_base;
-            }
-
-            for _ in 0..WINDOW_BITS {
-                window_base.double_in_place();
-            }
-        }
-        bits
     }
 
     /// Build a full witness: pi_x, pi_y, x_d raw bits, r·B (Montgomery), precomputed table.

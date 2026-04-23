@@ -21,13 +21,14 @@ pub struct CACInstanceCommit {
 }
 
 impl CACInstanceCommit {
+    // Todo: add x_d
     pub fn from_instance(instance: &BABEInstance) -> Self {
         let delta = instance.secrets.delta;
 
         let input_commits = compute_epk_with_delta(&instance.secrets.encoding_keys, delta).0;
-
+        // todo: change this to commit only the labels.
         let constant_commits = std::array::from_fn(|w| {
-            let l0 = instance.secrets.constant_0labels[w];
+            let l0 = instance.secrets.constant_val_labels[w];
             [h_256(&l0.0), h_256(&(l0 ^ delta).0)]
         });
 

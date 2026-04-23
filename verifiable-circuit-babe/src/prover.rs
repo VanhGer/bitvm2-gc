@@ -276,8 +276,12 @@ mod tests {
         let dynamic_public_inputs = vec![a * a];
 
         // 2. Verifier enc_setup.
-        let mut verifier = BABEInstance::new_from_seed(rand::random());
-        verifier.enc_setup(&vk, &static_public_inputs, dynamic_public_inputs.len()).unwrap();
+        let mut verifier = BABEInstance::new_from_seed(
+            rand::random(),
+            &vk,
+            &static_public_inputs,
+            dynamic_public_inputs.len()
+        ).unwrap();
 
         // 3. Full labels: [const_0, const_1, pi1_bits...].
         let full_labels = verifier.compute_pi1_labels_based_on_value(proof.a);
