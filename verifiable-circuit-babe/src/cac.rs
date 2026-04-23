@@ -64,8 +64,7 @@ pub fn verify_opened_instances(
     package: &CACSetupPackage,
     opened: &[(usize, u64)],
     vk: &Groth16VerifyingKey<ark_bn254::Bn254>,
-    static_public_inputs: &[Fr],
-    dynamic_pin_size: usize,
+    static_public_inputs: Fr,
 ) -> Result<(), String> {
     use p3_maybe_rayon::prelude::*;
     opened
@@ -75,7 +74,6 @@ pub fn verify_opened_instances(
                 seed,
                 vk,
                 static_public_inputs,
-                dynamic_pin_size
             )?;
 
             let recomputed = inst.commit();
@@ -156,12 +154,12 @@ mod tests {
         let (_, vk) = ark_groth16::Groth16::<ark_bn254::Bn254>::setup(
             DummyMulCircuit::<Fr> { a: Some(a), b: Some(b) }, &mut rng,
         ).expect("groth16 setup");
-        let static_public_inputs = vec![a * b];
-        let dynamic_public_inputs = vec![a * a];
+        let static_public_inputs = a * b;
+        let dynamic_public_inputs = a * a;
 
         // Verifier creates TEST_N_CC instances and commits.
         let now = std::time::Instant::now();
-        let verifier = BABEVerifier::new(TEST_N_CC, &vk, &static_public_inputs, dynamic_public_inputs.len())
+        let verifier = BABEVerifier::new(TEST_N_CC, &vk, static_public_inputs)
             .expect("BABEVerifier::new failed");
         let elapsed = now.elapsed();
         println!("Verifier setup for {TEST_N_CC} instances took {elapsed:.2?}");
@@ -184,7 +182,7 @@ mod tests {
 
         let now = std::time::Instant::now();
         // Prover verifies opened instances by re-deriving from seed.
-        verify_opened_instances(&package, &opened, &vk, &static_public_inputs, dynamic_public_inputs.len())
+        verify_opened_instances(&package, &opened, &vk, static_public_inputs)
             .expect("opened instance verification failed");
         let elapsed = now.elapsed();
         println!("Prover verification of opened instances took {elapsed:.2?}");

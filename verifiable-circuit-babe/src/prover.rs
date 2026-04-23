@@ -272,19 +272,18 @@ mod tests {
             DummyMulCircuit::<Fr> { a: Some(a), b: Some(b) },
             &mut rng,
         ).unwrap();
-        let static_public_inputs = vec![a * b];
-        let dynamic_public_inputs = vec![a * a];
+        let static_public_inputs = a * b;
+        let dynamic_public_inputs = a * a; // x_d
 
         // 2. Verifier enc_setup.
         let verifier = BABEInstance::new_from_seed(
             rand::random(),
             &vk,
-            &static_public_inputs,
-            dynamic_public_inputs.len()
+            static_public_inputs,
         ).unwrap();
 
-        // 3. Full labels: [const_0, const_1, pi1_bits...].
-        let full_labels = verifier.compute_pi1_labels_based_on_value(proof.a);
+        // 3. Input labels: [pi1_xbits, pi1_ybits, x_dbits...].
+        let input_labels = verifier.compute_input_labels_based_on_value(proof.a, a * a);
 
         // 4. Prover evaluates the garbled circuit.
         let prover = BABEProver::new(proof.clone());
@@ -292,7 +291,7 @@ mod tests {
         let ct_prove = prover.compute_ct_prove(
             &mut circuit,
             &gc_output_indices,
-            &full_labels,
+            &input_labels,
             &verifier.ciphertexts,
             &verifier.adaptor_table,
         );
@@ -318,10 +317,10 @@ mod tests {
         let (_, vk) = ark_groth16::Groth16::<Bn254>::setup(
             DummyMulCircuit::<Fr> { a: Some(a), b: Some(b) }, &mut rng,
         ).unwrap();
-        let static_public_inputs = vec![a * b];
-        let dynamic_public_inputs = vec![a * a];
+        let static_public_inputs = a * b;
+        let dynamic_public_inputs = a * a;
 
-        let verifier = BABEVerifier::new(TEST_N_CC, &vk, &static_public_inputs, dynamic_public_inputs.len()).unwrap();
+        let verifier = BABEVerifier::new(TEST_N_CC, &vk, static_public_inputs).unwrap();
         let package = verifier.commit();
         let finalized_indices = cac_finalize_indices(&package, TEST_M_CC);
         let (_, finalized) = verifier.open(&finalized_indices);
@@ -365,10 +364,13 @@ mod tests {
             DummyMulCircuit::<Fr> { a: Some(a), b: Some(b) },
             &mut rng,
         ).unwrap();
+        let static_public_inputs = a * b;
+        let dynamic_public_inputs = a * a;
+
 
         // base_input_labels: active labels for the 508 π₁ input wires of the base instance.
         let base_idx = finalized_indices[0];
-        let all_labels = verifier.instances[base_idx].compute_pi1_labels_based_on_value(proof.a);
+        let all_labels = verifier.instances[base_idx].compute_input_labels_based_on_value(proof.a, dynamic_public_inputs);
         let base_input_labels = &all_labels[2..]; // strip constant-wire labels
 
         let mut prover = BABEProver::new(proof.clone());

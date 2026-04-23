@@ -28,8 +28,13 @@ pub struct TxChallengeAssertOutputLock {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TxAssertWitness {
     /// Compressed G1Affine, 33 bytes — the asserted proof element.
+    /// This is not onchain
     pub pi1: Vec<u8>,
-    /// μ₁…μ_ℓ — Lamport signature, LAMPORT_N × 16 bytes.
+    /// Dynamic public input scalar x_d, 32 bytes (little-endian Fr).
+    /// This is not onchain
+    pub x_d: Vec<u8>,
+    /// μ₁…μ_M — Lamport signature, LAMPORT_N × 16 bytes.
+    /// This is submitted onchain.
     pub lamport_sig: LamportSig,
 }
 
@@ -37,12 +42,12 @@ pub struct TxAssertWitness {
 /// Input spends tx_Assert output 1: CheckLampSigsMatch(lpk_P, lpk_V) ∧ CheckSig(pk_V) ∧ CheckSig(pk_P)
 /// Script verifies:
 ///   (a) SHA256(μ[i]) == lpk_P[i][bit_i]     — μ is a valid Lamport sig for some π₁
-///   (b) blake3(L[i]) == lpk_V[i][bit_i]     — L[i] is the correct GC label for bit_i under epk
+///   (b) SHA256(L[i]) == lpk_V[i][bit_i]     — L[i] is the correct GC label for bit_i under epk
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TxChallengeAssertWitness {
-    /// L₁…L_ℓ — one GC input label per π₁ bit, LAMPORT_N × 16 bytes.
+    /// L₁…L_M — one GC input label per π₁ bit, LAMPORT_N × 16 bytes.
     pub input_labels: Vec<[u8; 16]>,
-    /// μ₁…μ_ℓ — Lamport sig re-posted to bind L to π₁.
+    /// μ₁…μ_M — Lamport sig re-posted to bind L to π₁.
     pub lamport_sig: LamportSig,
     /// VerifierLiveSig
     pub sig_v: BabeBtcSig,
@@ -97,16 +102,14 @@ pub trait OnchainSize {
 
 impl OnchainSize for TxAssertWitness {
     fn size_bytes(&self) -> usize {
-        PI1_BYTES           // pi1:         33 bytes
-            + LAMPORT_SIG_BYTES // lamport_sig: 8,128 bytes
-        // total: 8,161 bytes
+        LAMPORT_SIG_BYTES
     }
 }
 
 impl OnchainSize for TxChallengeAssertWitness {
     fn size_bytes(&self) -> usize {
-        LAMPORT_N * 16      // input_labels: 8,128 bytes
-            + LAMPORT_SIG_BYTES // lamport_sig:  8,128 bytes
+        LAMPORT_N * 16
+            + LAMPORT_SIG_BYTES
             + BTC_SIG_BYTES     // sig_v:           32 bytes
             + BTC_SIG_BYTES     // sig_p:           32 bytes
         // total: 16,320 bytes
@@ -149,6 +152,7 @@ mod tests {
 
         let assert_w = TxAssertWitness {
             pi1: vec![0u8; PI1_BYTES],
+            x_d: vec![0u8; 32],
             lamport_sig: dummy_lamport.clone(),
         };
         assert_eq!(assert_w.size_bytes(), 8161);

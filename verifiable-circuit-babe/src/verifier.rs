@@ -19,8 +19,7 @@ impl BABEVerifier {
     pub fn new(
         n_cc: usize,
         vk: &Groth16VerifyingKey<ark_bn254::Bn254>,
-        static_public_inputs: &[Fr],
-        dynamic_pin_size: usize,
+        static_public_inputs: Fr,
     ) -> Result<Self, String> {
         use p3_maybe_rayon::prelude::*;
         let seeds: Vec<u64> = (0..n_cc).map(|_| rand::random()).collect();
@@ -31,7 +30,6 @@ impl BABEVerifier {
                     seed,
                     vk,
                     static_public_inputs,
-                    dynamic_pin_size
                 )?;
                 Ok::<BABEInstance, String>(inst)
             })

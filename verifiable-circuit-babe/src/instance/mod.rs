@@ -3,7 +3,6 @@ use ark_ec::{AffineRepr, CurveGroup};
 use ark_ec::pairing::Pairing;
 use ark_ff::UniformRand;
 use garbled_snark_verifier::bag::{Circuit, S};
-use garbled_snark_verifier::circuits::bn254::fq::Fq;
 use crate::babe::WeKnownPi1SetupCt;
 use crate::gc::{build_base_table_bits, SparseAdaptorTable, CONSTANT_SIZE};
 use crate::instance::secret::InstanceSecrets;
@@ -33,13 +32,11 @@ impl BABEInstance {
     pub fn new_from_seed(
         seed: u64,
         vk: &Groth16VerifyingKey<ark_bn254::Bn254>,
-        static_inputs: &[Fr],
-        dynamic_pin_size: usize,
+        static_inputs: Fr,
     ) -> Result<Self, String> {
         use ark_bn254::G1Projective;
 
-        let num_static = static_inputs.len();
-        if num_static + dynamic_pin_size + 1 != vk.gamma_abc_g1.len() {
+        if vk.gamma_abc_g1.len() != 3{
             return Err("static/dynamic split does not match vk".to_string());
         }
 
@@ -55,10 +52,7 @@ impl BABEInstance {
         }
 
         // Compute r·L_i = r * sum(gamma_abc[num_static+1..]) and build the precomputed table.
-        let base = vk.gamma_abc_g1[num_static + 1..]
-            .iter()
-            .map(|p| (*p).into_group())
-            .sum::<G1Projective>() * secrets.r;
+        let base = vk.gamma_abc_g1[2] * secrets.r;
         let table_bits = build_base_table_bits(&base.into_affine());
 
         // Compute r·B bit representation (Montgomery form) for use as constant wires.
@@ -91,9 +85,9 @@ impl BABEInstance {
         // Evaluate circuit at a random pi1 and random x_d to garble.
         let pi1 = G1Projective::rand(&mut rand::thread_rng()).into_affine();
         let x_d = ark_bn254::Fr::rand(&mut rand::thread_rng());
-        let witness: Vec<bool> = Fq::to_bits(pi1.x)
+        let witness: Vec<bool> = DvFq::to_bits(pi1.x)
             .into_iter()
-            .chain(Fq::to_bits(pi1.y))
+            .chain(DvFq::to_bits(pi1.y))
             .chain(DvFr::to_bits(x_d))
             .chain(rb_x_bits)
             .chain(rb_y_bits)
@@ -128,7 +122,6 @@ impl BABEInstance {
             &secrets,
             vk,
             static_inputs,
-            dynamic_pin_size,
         )?;
 
         // circuit is dropped here — not stored in the instance.
@@ -160,19 +153,10 @@ impl BABEInstance {
     fn enc_setup(
         secrets: &InstanceSecrets,
         vk: &Groth16VerifyingKey<ark_bn254::Bn254>,
-        static_inputs: &[Fr],
-        dynamic_pin_size: usize,
+        static_inputs: Fr,
     ) -> Result<WeKnownPi1SetupCt, String> {
-        let num_static = static_inputs.len();
-        if num_static + dynamic_pin_size + 1 != vk.gamma_abc_g1.len() {
-            return Err("static/dynamic split does not match vk".to_string());
-        }
-
         let r = secrets.r;
-        let mut p_s = vk.gamma_abc_g1[0].into_group();
-        for (k, x) in static_inputs.iter().enumerate() {
-            p_s += vk.gamma_abc_g1[k + 1].into_group() * *x;
-        }
+        let p_s = vk.gamma_abc_g1[0].into_group() + vk.gamma_abc_g1[1].into_group() * static_inputs;
 
         let r_b = secrets.r_b;
         let r_delta = vk.delta_g2.into_group() * r;
@@ -195,22 +179,19 @@ impl BABEInstance {
         })
     }
 
-    // Todo: add x_d in this.
     /// Returns the input labels given the bits of pi1.
-    pub fn compute_pi1_labels_based_on_value(&self, pi1: ark_bn254::G1Affine) -> Vec<S> {
-        let x_bits = Fq::to_bits(pi1.x);
-        let y_bits = Fq::to_bits(pi1.y);
-        let witness: Vec<bool> = x_bits.into_iter().chain(y_bits.into_iter()).collect();
+    /// Use for testing.
+    pub fn compute_input_labels_based_on_value(&self, pi1: ark_bn254::G1Affine, x_d: ark_bn254::Fr) -> Vec<S> {
+        let x_bits = DvFq::to_bits(pi1.x);
+        let y_bits = DvFq::to_bits(pi1.y);
+        let xd_bits = DvFr::to_bits(x_d);
+        let witness: Vec<bool> = x_bits.into_iter().chain(y_bits).chain(xd_bits).collect();
         let delta = self.secrets.delta;
 
-        let mut labels = Vec::new();
-        labels.push(self.secrets.constant_val_labels[0]);
-        labels.push(self.secrets.constant_val_labels[1] ^ delta);
-        let tail: Vec<S> = witness.iter().enumerate().map(|(i, &b)| {
+        let labels: Vec<S> = witness.iter().enumerate().map(|(i, &b)| {
             let key = self.secrets.encoding_keys[i];
             if b { key ^ delta } else { key }
         }).collect();
-        labels.extend(tail);
         labels
     }
 
@@ -224,7 +205,6 @@ impl BABEInstance {
 mod tests {
     use super::*;
     use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
-    use ark_serialize::CanonicalDeserialize;
     use rand::SeedableRng;
     use crate::babe::DummyMulCircuit;
 
@@ -247,17 +227,18 @@ mod tests {
         ).expect("groth16 prove");
 
         // |S|=1 (a*b static), |D|=1 (a*a dynamic)
-        let static_inputs = vec![a * b];
+        let static_inputs = a * b;
+        let dynamic_inputs = a * a;
         let dynamic_pin_size = 1usize;
 
-        let instance = BABEInstance::new_from_seed(42, &vk, &static_inputs, dynamic_pin_size)
+        let instance = BABEInstance::new_from_seed(42, &vk, static_inputs)
             .expect("new_from_seed");
 
         let r = instance.secrets.r;
 
         // Simulate DSGC output: c1' = r·P_D + r·B
         // P_D = (a*a) · gamma_abc[|S|+1] = (a*a) · gamma_abc[2]
-        let p_d = vk.gamma_abc_g1[2].into_group() * (a * a);
+        let p_d = vk.gamma_abc_g1[2].into_group() * dynamic_inputs;
         let c1_prime = (p_d * r + instance.secrets.r_b.into_group()).into_affine();
 
         let ctprove = WeKnownPi1ProveCt { ct1_r_pi1: g1_to_ser(proof.a.into_group() * r) };

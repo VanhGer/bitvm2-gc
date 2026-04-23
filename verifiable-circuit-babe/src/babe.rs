@@ -9,6 +9,7 @@ use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
+use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::pairing::Pairing;
 use garbled_snark_verifier::bag::S;
 use crate::cac::{
@@ -25,7 +26,8 @@ use crate::verifier::BABEVerifier;
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 /// Number of bits in π₁ (G1Affine): 254 bits for x + 254 bits for y.
-pub const LAMPORT_N: usize = 508;
+/// Plus 254 Fr
+pub const LAMPORT_N: usize = 762;
 
 /// Total number of C&C instances the Verifier creates and commits to.
 /// In practice, N_CC = 181.
@@ -140,10 +142,9 @@ pub struct BabeCACE2ERun {
 /// and the public `CACSetupPackage` to send to the Prover.
 pub fn babe_verifier_cac_setup(
     vk: &Groth16VerifyingKey<Bn254>,
-    static_public_inputs: &[Fr],
-    dynamic_pin_size: usize,
+    static_public_inputs: Fr,
 ) -> (BABEVerifier, CACSetupPackage) {
-    let verifier = BABEVerifier::new(N_CC, vk, static_public_inputs, dynamic_pin_size).expect("verifier CAC setup failed");
+    let verifier = BABEVerifier::new(N_CC, vk, static_public_inputs).expect("verifier CAC setup failed");
     println!("Verifier: committing all instances..");
     let package = verifier.commit();
     (verifier, package)
@@ -176,10 +177,9 @@ pub fn babe_prover_verify_setup(
     finalized: &[FinalizedInstanceData],
     soldering: &SolderingData,
     vk: &Groth16VerifyingKey<Bn254>,
-    static_public_inputs: &[Fr],
-    dynamic_pin_size: usize,
+    static_public_inputs: Fr,
 ) -> Result<(), String> {
-    verify_opened_instances(package, opened, vk, static_public_inputs, dynamic_pin_size)?;
+    verify_opened_instances(package, opened, vk, static_public_inputs)?;
     verify_finalized_instances(package, finalized)?;
     BABEProver::verify_soldering_output(package, soldering)?;
     Ok(())
@@ -238,12 +238,14 @@ pub fn babe_build_deposit_lock(pk_p: BtcPk, pk_v: BtcPk, amount: u64) -> TxDepos
 // ─── Assert phase (Prover posts π₁) ─────────────────────────────────────────
 
 /// Prover: sign π₁ with lsk_P and build the assert witness.
-pub fn babe_prover_assert(proof: &Groth16Proof<Bn254>, lsk_p: &LamportSk) -> TxAssertWitness {
+pub fn babe_prover_assert(proof: &Groth16Proof<Bn254>, lsk_p: &LamportSk, x_d: ark_bn254::Fr) -> TxAssertWitness {
     let pi1 = proof.a;
     let mut pi1_bytes = Vec::new();
     pi1.serialize_compressed(&mut pi1_bytes).expect("serialize π₁");
+    // Todo: convert x_d to bytes
+    let mut x_d_bytes = Vec::new(); x_d.serialize_compressed(&mut x_d_bytes).expect("serialize x_d");
     let lamport_sig = lamport_sign(lsk_p, &pi1);
-    TxAssertWitness { pi1: pi1_bytes, lamport_sig }
+    TxAssertWitness { pi1: pi1_bytes, lamport_sig, x_d: x_d_bytes }
 }
 
 // ─── ChallengeAssert phase (Verifier reveals base-instance labels) ────────────
@@ -268,6 +270,7 @@ pub fn babe_verifier_challenge_assert_cac(
     sig_p_presig: BabeBtcSig,
 ) -> Option<TxChallengeAssertWitness> {
     let pi1 = G1Affine::deserialize_compressed(assert_witness.pi1.as_slice()).ok()?;
+    let x_d = Fr::from_le_bytes_mod_order(&assert_witness.x_d);
 
     println!("Verifier: Checking the Lamport signature in tx_Assert witness against pi1 and lpk_P...");
     if !lamport_verify(&verifier_state.lpk_p, &pi1, &assert_witness.lamport_sig) {
@@ -277,9 +280,9 @@ pub fn babe_verifier_challenge_assert_cac(
     // Derive labels from the base instance (finalized_indices[0]).
     let base_idx = verifier_state.finalized_indices[0];
     let base_inst = &verifier_state.verifier.instances[base_idx];
-    let all_labels = base_inst.compute_pi1_labels_based_on_value(pi1);
+    let input_labels = base_inst.compute_input_labels_based_on_value(pi1, x_d);
     // all_labels[0..2] are constant-wire labels; [2..] are π₁ input labels.
-    let input_labels: Vec<[u8; 16]> = all_labels[2..].iter().map(|s| s.0).collect();
+    let input_labels: Vec<[u8; 16]> = input_labels.iter().map(|s| s.0).collect();
 
     Some(TxChallengeAssertWitness {
         input_labels,
@@ -421,8 +424,8 @@ pub fn run_babe_e2e_cac() -> BabeCACE2ERun {
         DummyMulCircuit::<Fr> { a: Some(a), b: Some(b) },
         &mut rng,
     ).expect("groth16 prove");
-    let static_public_inputs = vec![a * b];
-    let dynamic_public_inputs = vec![a * a];
+    let static_public_inputs = a * b;
+    let dynamic_public_inputs = a * a;
 
     // ── Setup phase ───────────────────────────────────────────────────────────
 
@@ -435,7 +438,7 @@ pub fn run_babe_e2e_cac() -> BabeCACE2ERun {
     println!("Verifier generating BTC keys");
     let pk_v = BtcPk([1u8; 33]);
     println!("Verifier: building {} instances...", N_CC);
-    let (verifier, package) = babe_verifier_cac_setup(&vk, &static_public_inputs, dynamic_public_inputs.len());
+    let (verifier, package) = babe_verifier_cac_setup(&vk, static_public_inputs);
     // Verifier sends vk and package to Prover
     println!("Verifier: sending pk_v and {} instance commitment to Prover", N_CC);
 
@@ -450,7 +453,7 @@ pub fn run_babe_e2e_cac() -> BabeCACE2ERun {
 
     println!("Prover: verifying opening and soldering proof...");
     // Prover verifies everything.
-    babe_prover_verify_setup(&package, &opened, &finalized, &soldering, &vk, &static_public_inputs, dynamic_public_inputs.len())
+    babe_prover_verify_setup(&package, &opened, &finalized, &soldering, &vk, static_public_inputs)
         .expect("prover setup verification failed");
 
     println!("Prover: generating Lamport signature...");
@@ -508,7 +511,7 @@ pub fn run_babe_e2e_cac() -> BabeCACE2ERun {
     // ── Proving phase ─────────────────────────────────────────────────────────
 
     // Assert: Prover posts π₁ + Lamport sig on-chain.
-    let assert_witness = babe_prover_assert(&proof, &prover_state.lsk_p);
+    let assert_witness = babe_prover_assert(&proof, &prover_state.lsk_p, dynamic_public_inputs);
     println!("Prover: posting tx_Assert...");
     println!("tx_Assert witness:            {} bytes", assert_witness.size_bytes());
 
