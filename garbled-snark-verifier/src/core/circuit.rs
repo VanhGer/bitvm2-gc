@@ -123,9 +123,6 @@ impl Circuit {
         for wirex in self.0.iter() {
             wirex.borrow_mut().label = None;
         }
-        // compute the size of circuit, because this resetted circuit will be reused for multiple proofs
-        let size = self.size_in_bytes();
-        println!("Reset circuit, size: {} MB", size as f64 / 1_048_576.0);
     }
 
     pub fn is_fresh(&self) -> bool {

@@ -57,7 +57,7 @@ pub fn read_fresh_gc() -> (Circuit, Vec<usize>, Circuit, Vec<usize>) {
         (g, i)
     });
 
-    let (sgc, sgc_indices) = deserialize_circuit(sgc_bytes, fgc_indices_bytes);
+    let (sgc, sgc_indices) = deserialize_circuit(sgc_bytes, sgc_indices_bytes);
 
     (fgc, fgc_indices, sgc, sgc_indices)
 }

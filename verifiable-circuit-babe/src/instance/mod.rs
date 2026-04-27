@@ -11,7 +11,7 @@ use ark_serialize::CanonicalSerialize;
 use garbled_snark_verifier::dv_bn254::fp254impl::Fp254Impl;
 use garbled_snark_verifier::dv_bn254::fq::Fq as DvFq;
 use garbled_snark_verifier::dv_bn254::fr::Fr as DvFr;
-use crate::dre::{N, U_BAR_SIZE};
+use crate::dre::{N, Q_SIZE, U_BAR_SIZE};
 use crate::instance::commit::CACInstanceCommit;
 use crate::utils::{g2_to_ser, ro_from_pairing_bytes};
 
@@ -85,8 +85,8 @@ impl CACInstance {
             secrets.delta[0],
             2
         );
-        assert_eq!(fgc_output_labels.len(), U_BAR_SIZE);
-
+        assert_eq!(fgc_output_labels.len(), 2 * U_BAR_SIZE);
+        println!("cac instance fgc done");
         // Sgc - part 1
         let sgc_part1_witness: Vec<bool> = DvFr::to_bits(x_d);
         let (sgc_ciphertext_1, sgc_output_labels_1) = get_ciphertext_and_output_labels(
@@ -96,10 +96,11 @@ impl CACInstance {
             secrets.delta[1],
             SGC_PART1_CONSTANT_SIZE,
         );
-
+        println!("cac instance sgc part1 done");
+        assert_eq!(sgc_output_labels_1.len(), 2 * Q_SIZE);
         // Sgc - part 2
         // Reuse the fgc structure, by setting up the input & constant labels again, then evaluate.
-        assert_eq!(sgc_output_labels_1.len(), 2 * 2 * N);
+        fgc.reset_circuit_except_constants();
         // set label of part2 as output of part1
         for (i, &key) in sgc_output_labels_1.iter().step_by(2).enumerate()  {
             fgc.0[2 + i].borrow_mut().label = Some(S(key));
@@ -114,8 +115,8 @@ impl CACInstance {
             secrets.delta[1],
             2
         );
-        assert_eq!(sgc_output_labels_2.len(), U_BAR_SIZE);
-
+        assert_eq!(sgc_output_labels_2.len(), 2 * U_BAR_SIZE);
+        println!("cac instance sgc part 2 done");
         // generate adaptor table
         // fgc
         let fgc_adaptor_table = SparseAdaptorTable::build_from_r_and_u_bar_labels(
@@ -241,10 +242,8 @@ fn set_gc_const_labels(
     circuit: &mut Circuit,
     constant_labels: &[S],
 ) {
-    circuit.0[0].borrow_mut().label = Some(constant_labels[0]);
-    circuit.0[1].borrow_mut().label = Some(constant_labels[1]);
-    for i in 2..constant_labels.len() {
-        circuit.0[i + 2 * N ].borrow_mut().label = Some(constant_labels[i]);
+    for i in 0..constant_labels.len() {
+        circuit.0[i].borrow_mut().label = Some(constant_labels[i]);
     }
 }
 
@@ -262,7 +261,7 @@ fn get_ciphertext_and_output_labels(
     }
     let ciphertexts = circuit.garbled_gates_with_delta(delta);
 
-   // size = gc_output_indices x 2
+    // size = gc_output_indices x 2
     let output_labels: Vec<[u8; 16]> = output_indices
         .iter()
         .flat_map(|idx| {
@@ -309,6 +308,7 @@ mod tests {
 
         let instance = CACInstance::new_from_seed(42, &vk, static_inputs)
             .expect("new_from_seed");
+        println!("generate instance done");
 
         let r = instance.secrets.r;
 
@@ -316,12 +316,13 @@ mod tests {
         // P_D = (a*a) · gamma_abc[|S|+1] = (a*a) · gamma_abc[2]
         let p_d = vk.gamma_abc_g1[2].into_group() * dynamic_inputs;
         let c1_prime = (p_d * r + instance.secrets.b * r).into_affine();
-
         let ctprove = WeKnownPi1ProveCt { ct1_r_pi1: g1_to_ser(proof.a.into_group() * r) };
         let decrypted = we_known_pi1_dec(
             &vk, &instance.ct_setup, &ctprove, c1_prime,
             proof.b.into_group(), proof.c.into_group(),
         ).unwrap();
+
+        println!("decrypted done");
 
         assert_eq!(decrypted.as_slice(), &instance.secrets.msg);
     }

@@ -91,20 +91,20 @@ fn emit_fgc(
 /// B is garbler-private and supplied as input wires.
 ///
 /// Input wire layout:
-///   [0..Fr::N_BITS)          x_d — scalar bits, LSB-first (evaluator input)
-///   [Fr::N_BITS..Fr::N_BITS+N)    B_x — x-coordinate of B, Montgomery form (garbler-private)
-///   [Fr::N_BITS+N..Fr::N_BITS+2·N)  B_y — y-coordinate of B, Montgomery form (garbler-private)
+///   [0..Fr::N_BITS)           B_x — x-coordinate of B, Montgomery form (garbler-private)
+///   [Fr::N_BITS..Fr::N_BITS+N)     B_y — y-coordinate of B, Montgomery form (garbler-private)
+///   [Fr::N_BITS+N..Fr::N_BITS+2·N)  x_d — scalar bits, LSB-first (evaluator input)
 ///
 /// Output: Q_SIZE = 3·N bits — (X, Y, Z) of Q in projective Montgomery form.
 pub fn compile_sgc_part1(l2: G1Affine) -> (CircuitAdapter, Vec<usize>) {
     let mut bld = CircuitAdapter::default();
 
-    // x_d — evaluator input
-    let x_d: Vec<usize> = (0..Fr::N_BITS).map(|_| bld.fresh_one()).collect();
-
     // B — garbler-private affine point, Montgomery form
     let b_x = Fq::wires(&mut bld);
     let b_y = Fq::wires(&mut bld);
+
+    // x_d — evaluator input
+    let x_d: Vec<usize> = (0..Fr::N_BITS).map(|_| bld.fresh_one()).collect();
 
     // L_2 table — embedded as constant wires, same pattern as g in compile_fgc
     let table_wires: Vec<usize> = build_l2_table_bits(&l2)
@@ -290,10 +290,10 @@ mod tests {
     /// Witness for compile_sgc_part1: x_d | B_x (Montgomery) | B_y (Montgomery).
     /// L_2 table is baked into the circuit as constants, so it is not part of the witness.
     fn sgc_part1_witness(x_d: ark_bn254::Fr, b: &G1Affine) -> Vec<bool> {
-        Fr::to_bits(x_d)
+        Fq::to_bits(Fq::as_montgomery(b.x))
             .into_iter()
-            .chain(Fq::to_bits(Fq::as_montgomery(b.x)))
             .chain(Fq::to_bits(Fq::as_montgomery(b.y)))
+            .chain(Fr::to_bits(x_d))
             .collect()
     }
 
@@ -328,7 +328,7 @@ mod tests {
         let got      = eval_sgc_part1(l2, b, x_d);
         let expected = (ark_bn254::G1Projective::from(l2) * x_d
             + ark_bn254::G1Projective::from(b))
-        .into_affine();
+            .into_affine();
 
         assert_eq!(got, expected, "Q = x_d · L₂ + B affine mismatch");
     }
@@ -341,7 +341,7 @@ mod tests {
         let got      = eval_sgc_part1(l2, b, ark_bn254::Fr::from(1u64));
         let expected = (ark_bn254::G1Projective::from(l2)
             + ark_bn254::G1Projective::from(b))
-        .into_affine();
+            .into_affine();
 
         assert_eq!(got, expected, "Q = 1·L₂ + B should equal L₂ + B");
     }
