@@ -4,29 +4,30 @@ use ark_ec::pairing::Pairing;
 use ark_ff::UniformRand;
 use garbled_snark_verifier::bag::{Circuit, S};
 use crate::babe::WeKnownPi1SetupCt;
-use crate::gc::{build_l2_table_bits, SparseAdaptorTable, CONSTANT_SIZE};
+use crate::gc::{build_l2_table_bits, SparseAdaptorTable, SGC_PART1_CONSTANT_SIZE, WINDOW_ENTRIES};
 use crate::instance::secret::InstanceSecrets;
 use ark_groth16::VerifyingKey as Groth16VerifyingKey;
 use ark_serialize::CanonicalSerialize;
 use garbled_snark_verifier::dv_bn254::fp254impl::Fp254Impl;
 use garbled_snark_verifier::dv_bn254::fq::Fq as DvFq;
 use garbled_snark_verifier::dv_bn254::fr::Fr as DvFr;
-use crate::dre::N;
+use crate::dre::{N, U_BAR_SIZE};
 use crate::instance::commit::CACInstanceCommit;
 use crate::utils::{g2_to_ser, ro_from_pairing_bytes};
 
 pub mod secret;
 pub mod commit;
 
-pub struct BABEInstance {
+pub struct CACInstance {
     pub seed: u64,
     pub secrets: InstanceSecrets,
     pub ct_setup: WeKnownPi1SetupCt,
-    pub adaptor_table: SparseAdaptorTable,
-    pub ciphertexts: Vec<Option<S>>,
+    pub adaptor_tables: [SparseAdaptorTable; 2],
+    /// for fgc, sgc part 1, sgc part 2
+    pub ciphertexts_sets: [Vec<Option<S>>; 3]
 }
 
-impl BABEInstance {
+impl CACInstance {
     /// Construct a instance fully determined by `seed`.
     /// W/O ct_setup.
     pub fn new_from_seed(
@@ -36,86 +37,99 @@ impl BABEInstance {
     ) -> Result<Self, String> {
         use ark_bn254::G1Projective;
 
-        if vk.gamma_abc_g1.len() != 3{
+        if vk.gamma_abc_g1.len() != 3 {
             return Err("static/dynamic split does not match vk".to_string());
         }
 
         let secrets = InstanceSecrets::new_from_seed(seed);
 
         // Load fresh circuit structure from pre-serialized files; drop after use.
-        let (mut circuit, gc_output_indices) = crate::gc::read_fresh_circuit();
-
+        let (mut fgc, fgc_indices, mut sgc, sgc_indices) = crate::gc::read_fresh_gc();
 
         // Apply encoding keys as 0-labels for evaluator input wires (pi_x, pi_y, x_d).
-        for (i, &key) in secrets.encoding_keys.iter().enumerate() {
-            circuit.0[2 + i].borrow_mut().label = Some(key);
+        for (i, &key) in secrets.encoding_keys[0].iter().enumerate() {
+            fgc.0[2 + i].borrow_mut().label = Some(key);
+        }
+        for (i, &key) in secrets.encoding_keys[1].iter().enumerate() {
+            sgc.0[SGC_PART1_CONSTANT_SIZE + i].borrow_mut().label = Some(key);
         }
 
-        // Compute r·L_i = r * sum(gamma_abc[num_static+1..]) and build the precomputed table.
-        let base = vk.gamma_abc_g1[2] * secrets.r;
-        let table_bits = build_l2_table_bits(&base.into_affine());
-
-        // Compute r·B bit representation (Montgomery form) for use as constant wires.
-        let rb_x_bits: Vec<bool> = DvFq::to_bits(DvFq::as_montgomery(secrets.r_b.x));
-        let rb_y_bits: Vec<bool> = DvFq::to_bits(DvFq::as_montgomery(secrets.r_b.y));
-
-        // Derive 0-labels for each constant wire from val-labels and actual wire values.
-        // constant_val_labels[i] is the label for the actual value of constant wire i:
-        //   if value = 0 → val_label IS the 0-label
-        //   if value = 1 → val_label IS the 1-label, so 0-label = val_label ^ delta
-        let delta = secrets.delta;
-        let mut constants_0labels = Vec::with_capacity(CONSTANT_SIZE);
-        constants_0labels.push(secrets.constant_val_labels[0]);           // wire 0: value = 0
-        constants_0labels.push(secrets.constant_val_labels[1] ^ delta);  // wire 1: value = 1
-        for (k, &bit) in rb_x_bits.iter().enumerate() {
-            let lv = secrets.constant_val_labels[2 + k];
-            constants_0labels.push(if bit { lv ^ delta } else { lv });
+        // Compute B bit representation (Montgomery form) for use as constant wires.
+        let b_x_bits: Vec<bool> = DvFq::to_bits(DvFq::as_montgomery(secrets.b.x));
+        let b_y_bits: Vec<bool> = DvFq::to_bits(DvFq::as_montgomery(secrets.b.y));
+        // Set constant wire value for sgc part 1
+        for (i, bit) in b_x_bits.iter().enumerate() {
+            sgc.0[2 + i].borrow_mut().value = Some(*bit);
         }
-        for (k, &bit) in rb_y_bits.iter().enumerate() {
-            let lv = secrets.constant_val_labels[2 + N + k];
-            constants_0labels.push(if bit { lv ^ delta } else { lv });
-        }
-        for (k, &bit) in table_bits.iter().enumerate() {
-            let lv = secrets.constant_val_labels[2 + 2 * N + k];
-            constants_0labels.push(if bit { lv ^ delta } else { lv });
+        for (i, bit) in b_y_bits.iter().enumerate() {
+            sgc.0[2 + 254 + i].borrow_mut().value = Some(*bit);
         }
 
-        BABEInstance::set_gc_const_labels(&mut circuit, &constants_0labels);
+        // set constant labels
+        set_gc_const_labels(&mut fgc, &secrets.constant_0labels[0]);
+        set_gc_const_labels(&mut sgc, &secrets.constant_0labels[1]);
 
-        // Evaluate circuit at a random pi1 and random x_d to garble.
+        // Evaluate circuit at a random pi1 and random x_d to garble
         let pi1 = G1Projective::rand(&mut rand::thread_rng()).into_affine();
         let x_d = ark_bn254::Fr::rand(&mut rand::thread_rng());
-        let witness: Vec<bool> = DvFq::to_bits(pi1.x)
+
+        // Fgc
+        let fgc_witness: Vec<bool> = DvFq::to_bits(pi1.x)
             .into_iter()
             .chain(DvFq::to_bits(pi1.y))
-            .chain(DvFr::to_bits(x_d))
-            .chain(rb_x_bits)
-            .chain(rb_y_bits)
-            .chain(table_bits)
             .collect();
-        circuit.set_witness_value(&witness);
-        for gate in &mut circuit.1 {
-            gate.evaluate();
+        let (fgc_ciphertext, fgc_output_labels) = get_ciphertext_and_output_labels(
+            &mut fgc,
+            &fgc_indices,
+            &fgc_witness,
+            secrets.delta[0],
+            2
+        );
+        assert_eq!(fgc_output_labels.len(), U_BAR_SIZE);
+
+        // Sgc - part 1
+        let sgc_part1_witness: Vec<bool> = DvFr::to_bits(x_d);
+        let (sgc_ciphertext_1, sgc_output_labels_1) = get_ciphertext_and_output_labels(
+            &mut sgc,
+            &sgc_indices,
+            &sgc_part1_witness,
+            secrets.delta[1],
+            SGC_PART1_CONSTANT_SIZE,
+        );
+
+        // Sgc - part 2
+        // Reuse the fgc structure, by setting up the input & constant labels again, then evaluate.
+        assert_eq!(sgc_output_labels_1.len(), 2 * 2 * N);
+        // set label of part2 as output of part1
+        for (i, &key) in sgc_output_labels_1.iter().step_by(2).enumerate()  {
+            fgc.0[2 + i].borrow_mut().label = Some(S(key));
         }
-        let ciphertexts = circuit.garbled_gates_with_delta(secrets.delta);
+        // set constant for part2
+        set_gc_const_labels(&mut fgc, &secrets.constant_0labels[1][0..2]);
+        // random eval
+        let (sgc_ciphertext_2, sgc_output_labels_2) = get_ciphertext_and_output_labels(
+            &mut fgc,
+            &fgc_indices,
+            &fgc_witness,
+            secrets.delta[1],
+            2
+        );
+        assert_eq!(sgc_output_labels_2.len(), U_BAR_SIZE);
 
-        // Recover label0 for each output wire.
-        let delta = secrets.delta;
-        let output_labels: Vec<[u8; 16]> = gc_output_indices
-            .iter()
-            .flat_map(|idx| {
-                let label_0 = circuit.0[*idx]
-                    .borrow()
-                    .select_with_delta(circuit.0[*idx].borrow().get_value(), delta);
-                [label_0.0, (label_0 ^ delta).0]
-            })
-            .collect();
-
-        let adaptor_table = SparseAdaptorTable::build_from_r_and_u_bar_labels(
+        // generate adaptor table
+        // fgc
+        let fgc_adaptor_table = SparseAdaptorTable::build_from_r_and_u_bar_labels(
             secrets.r,
-            &output_labels,
-            &secrets.rhos,
-            &secrets.fq_deltas,
+            &fgc_output_labels,
+            &secrets.rhos[0],
+            &secrets.fq_deltas[0],
+        );
+
+        let sgc_adaptor_table = SparseAdaptorTable::build_from_r_and_u_bar_labels(
+            secrets.r,
+            &sgc_output_labels_2,
+            &secrets.rhos[1],
+            &secrets.fq_deltas[1],
         );
 
         let ct_setup = Self::enc_setup(
@@ -130,21 +144,9 @@ impl BABEInstance {
             seed,
             secrets,
             ct_setup,
-            adaptor_table,
-            ciphertexts,
+            adaptor_tables: [fgc_adaptor_table, sgc_adaptor_table],
+            ciphertexts_sets: [fgc_ciphertext, sgc_ciphertext_1, sgc_ciphertext_2],
         })
-    }
-
-    pub fn set_gc_const_labels(
-        circuit: &mut Circuit,
-        constant_labels: &[S],
-    ) {
-        assert_eq!(constant_labels.len(), CONSTANT_SIZE);
-        circuit.0[0].borrow_mut().label = Some(constant_labels[0]);
-        circuit.0[1].borrow_mut().label = Some(constant_labels[1]);
-        for i in 2..CONSTANT_SIZE {
-            circuit.0[i + 2 * N + DvFr::N_BITS].borrow_mut().label = Some(constant_labels[i]);
-        }
     }
 
     /// Enc*(crs, x_S, |D|, msg; r, r·B):
@@ -158,7 +160,7 @@ impl BABEInstance {
         let r = secrets.r;
         let p_s = vk.gamma_abc_g1[0].into_group() + vk.gamma_abc_g1[1].into_group() * static_inputs;
 
-        let r_b = secrets.r_b;
+        let r_b = secrets.b * r;
         let r_delta = vk.delta_g2.into_group() * r;
 
         let t1 = ark_bn254::Bn254::pairing(vk.alpha_g1, vk.beta_g2.into_group() * r);
@@ -181,24 +183,98 @@ impl BABEInstance {
 
     /// Returns the input labels given the bits of pi1.
     /// Use for testing.
-    pub fn compute_input_labels_based_on_value(&self, pi1: ark_bn254::G1Affine, x_d: ark_bn254::Fr) -> Vec<S> {
+    pub fn compute_pi1_labels_based_on_value(&self, pi1: ark_bn254::G1Affine) -> Vec<S> {
         let x_bits = DvFq::to_bits(pi1.x);
         let y_bits = DvFq::to_bits(pi1.y);
-        let xd_bits = DvFr::to_bits(x_d);
-        let witness: Vec<bool> = x_bits.into_iter().chain(y_bits).chain(xd_bits).collect();
-        let delta = self.secrets.delta;
+        let witness: Vec<bool> = x_bits.into_iter().chain(y_bits).collect();
+        let delta = self.secrets.delta[0];
 
         let labels: Vec<S> = witness.iter().enumerate().map(|(i, &b)| {
-            let key = self.secrets.encoding_keys[i];
+            let key = self.secrets.encoding_keys[0][i];
             if b { key ^ delta } else { key }
         }).collect();
         labels
     }
 
+    /// Returns the input labels given the bits of pi1.
+    /// Use for testing.
+    pub fn compute_x_d_labels_based_on_value(&self, x_d: Fr) -> Vec<S> {
+        let witness = DvFr::to_bits(x_d);
+        let delta = self.secrets.delta[1];
+
+        let labels: Vec<S> = witness.iter().enumerate().map(|(i, &b)| {
+            let key = self.secrets.encoding_keys[1][i];
+            if b { key ^ delta } else { key }
+        }).collect();
+        labels
+    }
+
+    pub fn b_value_labels(&self) -> Vec<S> {
+        let b_x_bits: Vec<bool> = DvFq::to_bits(DvFq::as_montgomery(self.secrets.b.x));
+        let b_y_bits: Vec<bool> = DvFq::to_bits(DvFq::as_montgomery(self.secrets.b.y));
+        let mut labels = Vec::new();
+        for (i, bit) in b_x_bits.iter().enumerate() {
+            if *bit {
+                labels.push(self.secrets.constant_0labels[1][i + 2] ^ self.secrets.delta[1]);
+            } else {
+                labels.push(self.secrets.constant_0labels[1][i + 2]);
+            }
+        }
+
+        for (i, bit) in b_y_bits.iter().enumerate() {
+            if *bit {
+                labels.push(self.secrets.constant_0labels[1][i + 2 + 254] ^ self.secrets.delta[1]);
+            } else {
+                labels.push(self.secrets.constant_0labels[1][i + 2 + 254]);
+            }
+        }
+
+        labels
+    }
 
     pub fn commit(&self) -> CACInstanceCommit {
         CACInstanceCommit::from_instance(self)
     }
+}
+
+fn set_gc_const_labels(
+    circuit: &mut Circuit,
+    constant_labels: &[S],
+) {
+    circuit.0[0].borrow_mut().label = Some(constant_labels[0]);
+    circuit.0[1].borrow_mut().label = Some(constant_labels[1]);
+    for i in 2..constant_labels.len() {
+        circuit.0[i + 2 * N ].borrow_mut().label = Some(constant_labels[i]);
+    }
+}
+
+/// Generate ciphertexts and all output labels
+fn get_ciphertext_and_output_labels(
+    circuit: &mut Circuit,
+    output_indices: &[usize],
+    random_witness: &[bool],
+    delta: S,
+    const_skip: usize,
+) -> (Vec<Option<S>>, Vec<[u8; 16]>) {
+    circuit.set_witness_value(&random_witness, const_skip);
+    for gate in &mut circuit.1 {
+        gate.evaluate();
+    }
+    let ciphertexts = circuit.garbled_gates_with_delta(delta);
+
+   // size = gc_output_indices x 2
+    let output_labels: Vec<[u8; 16]> = output_indices
+        .iter()
+        .flat_map(|idx| {
+            let label_0 = circuit.0[*idx]
+                .borrow()
+                .select_with_delta(circuit.0[*idx].borrow().get_value(), delta);
+            [label_0.0, (label_0 ^ delta).0]
+        })
+        .collect();
+
+    (ciphertexts, output_labels)
+
 }
 
 #[cfg(test)]
@@ -231,7 +307,7 @@ mod tests {
         let dynamic_inputs = a * a;
         let dynamic_pin_size = 1usize;
 
-        let instance = BABEInstance::new_from_seed(42, &vk, static_inputs)
+        let instance = CACInstance::new_from_seed(42, &vk, static_inputs)
             .expect("new_from_seed");
 
         let r = instance.secrets.r;
@@ -239,7 +315,7 @@ mod tests {
         // Simulate DSGC output: c1' = r·P_D + r·B
         // P_D = (a*a) · gamma_abc[|S|+1] = (a*a) · gamma_abc[2]
         let p_d = vk.gamma_abc_g1[2].into_group() * dynamic_inputs;
-        let c1_prime = (p_d * r + instance.secrets.r_b.into_group()).into_affine();
+        let c1_prime = (p_d * r + instance.secrets.b * r).into_affine();
 
         let ctprove = WeKnownPi1ProveCt { ct1_r_pi1: g1_to_ser(proof.a.into_group() * r) };
         let decrypted = we_known_pi1_dec(

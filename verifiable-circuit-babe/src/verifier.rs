@@ -1,12 +1,12 @@
 use ark_bn254::Fr;
 use ark_groth16::VerifyingKey as Groth16VerifyingKey;
 use rand::Rng;
-use crate::instance::BABEInstance;
+use crate::instance::CACInstance;
 
 /// The C&C Verifier: manages N_CC garbled-circuit instances for Cut-and-Choose.
 pub struct BABEVerifier {
     /// All N_CC instances, each fully derived from its own seed.
-    pub instances: Vec<BABEInstance>,
+    pub instances: Vec<CACInstance>,
     /// value used for CA_2 Txn
     pub temp_val: [u8; 32],
 }
@@ -26,12 +26,12 @@ impl BABEVerifier {
         let instances = seeds
             .par_iter()
             .map(|&seed| {
-                let inst = BABEInstance::new_from_seed(
+                let inst = CACInstance::new_from_seed(
                     seed,
                     vk,
                     static_public_inputs,
                 )?;
-                Ok::<BABEInstance, String>(inst)
+                Ok::<CACInstance, String>(inst)
             })
             .collect::<Vec<_>>()
             .into_iter()
@@ -67,14 +67,24 @@ impl BABEVerifier {
         let mut finalized = Vec::new();
         for &i in finalized_indices {
             let inst = &self.instances[i];
-            let constant_labels =
-            [inst.secrets.constant_val_labels[0], inst.secrets.constant_val_labels[1] ^ inst.secrets.delta];
+            let constant_labels_0 = [
+                inst.secrets.constant_0labels[0][0], inst.secrets.constant_0labels[0][1] ^ inst.secrets.delta[0]
+            ];
+            
+            let mut constant_labels_1 = vec![
+                inst.secrets.constant_0labels[1][0], inst.secrets.constant_0labels[1][1] ^ inst.secrets.delta[1]
+            ];
+            constant_labels_1.extend(inst.b_value_labels());
+            
+            
             finalized.push(crate::cac::FinalizedInstanceData {
                 index: i,
-                gc_ciphertexts: inst.ciphertexts.clone(),
-                adaptor_table: inst.adaptor_table.clone(),
+                gc_ciphertexts: inst.ciphertexts_sets.clone(),
+                adaptor_tables: inst.adaptor_tables.clone(),
                 ct_setup: inst.ct_setup.clone(),
-                constant_labels
+                constant_labels_0,
+                constant_labels_1: constant_labels_1.try_into().unwrap(),
+                b: inst.secrets.b
             });
         }
 

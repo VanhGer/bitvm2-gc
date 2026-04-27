@@ -70,14 +70,16 @@ pub enum BabeBtcSig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EncodingKeyPublic(pub Vec<[[u8; 20]; 2]>);
 
-pub fn compute_epk_with_delta(encoding_keys: &[S], delta: S) -> EncodingKeyPublic {
-    let pairs = encoding_keys.iter().map(|&key| [derive_hashlock(&key.0), derive_hashlock(&(key ^ delta).0)]).collect();
+pub fn compute_epk_with_delta(encoding_keys: &[Vec<S>; 2], delta: &[S; 2]) -> EncodingKeyPublic {
+    let fgc_pairs: Vec<[[u8; 20]; 2]> = encoding_keys[0].iter().map(|&key| [derive_hashlock(&key.0), derive_hashlock(&(key ^ delta[0]).0)]).collect();
+    let sgc_pairs: Vec<[[u8; 20]; 2]> = encoding_keys[1].iter().map(|&key| [derive_hashlock(&key.0), derive_hashlock(&(key ^ delta[1]).0)]).collect();
+    let pairs: Vec<[[u8; 20]; 2]> = fgc_pairs.into_iter().chain(sgc_pairs).collect();
     EncodingKeyPublic(pairs)
 }
 
-pub fn compute_epk(encoding_keys: &[S]) -> EncodingKeyPublic {
+pub fn compute_epk(encoding_keys: &[Vec<S>; 2]) -> EncodingKeyPublic {
     use garbled_snark_verifier::core::utils::NON_CAC_DELTA;
-    compute_epk_with_delta(encoding_keys, NON_CAC_DELTA)
+    compute_epk_with_delta(encoding_keys, &[NON_CAC_DELTA; 2])
 }
 
 // ─── Presig structs ───────────────────────────────────────────────────────────
@@ -280,7 +282,8 @@ pub fn babe_verifier_challenge_assert_cac(
     // Derive labels from the base instance (finalized_indices[0]).
     let base_idx = verifier_state.finalized_indices[0];
     let base_inst = &verifier_state.verifier.instances[base_idx];
-    let input_labels = base_inst.compute_input_labels_based_on_value(pi1, x_d);
+    // Todo: fix this (use x_d)
+    let input_labels = base_inst.compute_pi1_labels_based_on_value(pi1);
     // all_labels[0..2] are constant-wire labels; [2..] are π₁ input labels.
     let input_labels: Vec<[u8; 16]> = input_labels.iter().map(|s| s.0).collect();
 

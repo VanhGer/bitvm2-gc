@@ -85,7 +85,8 @@ impl BABEProver {
         let sld = &soldering.soldering_proof.soldered_output;
 
         println!("Trying base instance...");
-        let base_full = Self::build_full_labels(&finalized[0].constant_labels, base_input_labels);
+        // todo: fix this, this is hard-coded as fgc labels
+        let base_full = Self::build_full_labels(&finalized[0].constant_labels_0, base_input_labels);
         let base_res = self.try_evaluate_instance(&finalized[0], &base_full, h_msgs_onchain[0]);
         match base_res {
             Ok(true) => return true,
@@ -110,7 +111,8 @@ impl BABEProver {
                 })
                 .collect();
 
-            let full = Self::build_full_labels(&finalized[i].constant_labels, &instance_labels);
+            // todo: add sgc labels
+            let full = Self::build_full_labels(&finalized[i].constant_labels_0, &instance_labels);
             let temp = self.try_evaluate_instance(&finalized[i], &full, h_msgs_onchain[i]);
             match temp {
                 Ok(true) => return true,
@@ -138,13 +140,14 @@ impl BABEProver {
         full_labels: &[S],
         h_msg_onchain: [u8; 20],
     ) -> Result<bool, String> {
-        let (mut circuit, gc_output_indices) = crate::gc::read_fresh_circuit();
+        // Todo: add sgc
+        let (mut circuit, gc_output_indices, _, _) = crate::gc::read_fresh_gc();
         let ct_prove = self.compute_ct_prove(
             &mut circuit,
             &gc_output_indices,
             full_labels,
-            &data.gc_ciphertexts,
-            &data.adaptor_table,
+            &data.gc_ciphertexts[0],
+            &data.adaptor_tables[0],
         );
         drop(circuit);
 
@@ -179,7 +182,7 @@ impl BABEProver {
             .chain(Fq::to_bits(pi1.y).into_iter())
             .collect();
 
-        garbled_circuit.set_witness_value(&witness);
+        garbled_circuit.set_witness_value(&witness, 2);
         for gate in &mut garbled_circuit.1 {
             gate.evaluate();
         }
@@ -248,7 +251,7 @@ mod tests {
     use garbled_snark_verifier::core::utils::reset_gid;
     use crate::babe::DummyMulCircuit;
     use crate::cac::cac_finalize_indices;
-    use crate::instance::BABEInstance;
+    use crate::instance::CACInstance;
     use crate::soldering::{build_soldered_wires_input, soldering_guest_compute, SolderingProof};
     use crate::verifier::BABEVerifier;
 
@@ -276,24 +279,26 @@ mod tests {
         let dynamic_public_inputs = a * a; // x_d
 
         // 2. Verifier enc_setup.
-        let verifier = BABEInstance::new_from_seed(
+        let verifier = CACInstance::new_from_seed(
             rand::random(),
             &vk,
             static_public_inputs,
         ).unwrap();
 
         // 3. Input labels: [pi1_xbits, pi1_ybits, x_dbits...].
-        let input_labels = verifier.compute_input_labels_based_on_value(proof.a, a * a);
+        // Todo: input labels must contains x_d
+        let input_labels = verifier.compute_pi1_labels_based_on_value(proof.a);
 
         // 4. Prover evaluates the garbled circuit.
         let prover = BABEProver::new(proof.clone());
-        let (mut circuit, gc_output_indices) = crate::gc::read_fresh_circuit();
+        // Todo: add sgc
+        let (mut circuit, gc_output_indices, _, _) = crate::gc::read_fresh_gc();
         let ct_prove = prover.compute_ct_prove(
             &mut circuit,
             &gc_output_indices,
             &input_labels,
-            &verifier.ciphertexts,
-            &verifier.adaptor_table,
+            &verifier.ciphertexts_sets[0],
+            &verifier.adaptor_tables[0],
         );
         drop(circuit);
 
@@ -370,7 +375,8 @@ mod tests {
 
         // base_input_labels: active labels for the 508 π₁ input wires of the base instance.
         let base_idx = finalized_indices[0];
-        let all_labels = verifier.instances[base_idx].compute_input_labels_based_on_value(proof.a, dynamic_public_inputs);
+        // Todo: add dynamic input
+        let all_labels = verifier.instances[base_idx].compute_pi1_labels_based_on_value(proof.a);
         let base_input_labels = &all_labels[2..]; // strip constant-wire labels
 
         let mut prover = BABEProver::new(proof.clone());

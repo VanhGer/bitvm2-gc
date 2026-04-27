@@ -17,7 +17,7 @@ pub const WINDOW_BITS: usize = 8;
 pub const WINDOW_COUNT: usize = (Fr::N_BITS + WINDOW_BITS - 1) / WINDOW_BITS; // 32
 pub const WINDOW_ENTRIES: usize = 1 << WINDOW_BITS; // 256
 pub const PRECOMP_TABLE_BITS: usize = WINDOW_COUNT * WINDOW_ENTRIES * 2 * N;
-pub const CONSTANT_SIZE: usize = 2 + 2 * N + PRECOMP_TABLE_BITS; // 0/1 + B + L_2 table.
+pub const SGC_PART1_CONSTANT_SIZE: usize = 2 + 2 * N; // 0/1 + B.
 
 
 // ── Circuit 1 / FGC ────────────────────────────────────────────────────────

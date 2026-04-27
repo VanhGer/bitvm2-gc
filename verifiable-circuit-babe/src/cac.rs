@@ -1,4 +1,5 @@
-use ark_bn254::Fr;
+use ark_bn254::{Fr, G1Affine};
+use ark_ec::AffineRepr;
 use ark_groth16::VerifyingKey as Groth16VerifyingKey;
 use crate::babe::WeKnownPi1SetupCt;
 use crate::instance::commit::CACInstanceCommit;
@@ -8,7 +9,8 @@ use rand::Rng;
 use rand_chacha::ChaCha12Rng;
 use rand::SeedableRng;
 use sha2::{Digest, Sha256};
-use crate::instance::BABEInstance;
+use garbled_snark_verifier::dv_bn254::fq::Fq;
+use crate::instance::CACInstance;
 use crate::utils::h_256;
 
 /// What the Verifier sends to the Prover during the C&C commit phase.
@@ -21,20 +23,28 @@ pub fn cac_finalize_indices(package: &CACSetupPackage, m_cc: usize) -> Vec<usize
     let n_cc = package.commits.len();
     assert!(m_cc <= n_cc, "m_cc ({m_cc}) must be <= n_cc ({n_cc})");
 
+    // Todo: make it linter
     let mut hasher = Sha256::new();
     for commit in &package.commits {
         for wire_pair in &commit.epk {
             hasher.update(wire_pair[0]);
             hasher.update(wire_pair[1]);
         }
-        for wire_pair in &commit.constant_commits {
+        for wire_pair in &commit.constant_commits_0 {
+            hasher.update(wire_pair[0]);
+            hasher.update(wire_pair[1]);
+        }
+        for wire_pair in &commit.constant_commits_1 {
             hasher.update(wire_pair[0]);
             hasher.update(wire_pair[1]);
         }
         hasher.update(commit.h_msg);
         hasher.update(commit.h_ct_setup);
-        hasher.update(commit.com_adaptor);
-        hasher.update(commit.com_gc);
+        hasher.update(commit.com_adaptor[0]);
+        hasher.update(commit.com_adaptor[1]);
+        hasher.update(commit.com_gc[0]);
+        hasher.update(commit.com_gc[1]);
+        hasher.update(commit.com_gc[2]);
     }
     let seed: [u8; 32] = hasher.finalize().into();
     let mut rng = ChaCha12Rng::from_seed(seed);
@@ -53,12 +63,16 @@ pub fn cac_finalize_indices(package: &CACSetupPackage, m_cc: usize) -> Vec<usize
 /// GC data the Verifier reveals for each finalized (kept) instance.
 pub struct FinalizedInstanceData {
     pub index: usize,
-    pub gc_ciphertexts: Vec<Option<S>>,
-    pub adaptor_table: SparseAdaptorTable,
+    pub gc_ciphertexts: [Vec<Option<S>>; 3],
+    pub adaptor_tables: [SparseAdaptorTable; 2],
     pub ct_setup: WeKnownPi1SetupCt,
     /// [0-label of wire-0 (constant false), 1-label of wire-1 (constant true)].
-    pub constant_labels: [S; 2],
+    pub constant_labels_0: [S; 2],
+    /// value-based labels
+    pub constant_labels_1: [S; 510],
+    pub b: G1Affine,
 }
+
 
 pub fn verify_opened_instances(
     package: &CACSetupPackage,
@@ -70,7 +84,7 @@ pub fn verify_opened_instances(
     opened
         .par_iter()
         .map(|&(idx, seed)| {
-            let inst = BABEInstance::new_from_seed(
+            let inst = CACInstance::new_from_seed(
                 seed,
                 vk,
                 static_public_inputs,
@@ -82,7 +96,8 @@ pub fn verify_opened_instances(
             if recomputed.epk != committed.epk {
                 return Err(format!("instance {idx}: input_commits mismatch"));
             }
-            if recomputed.constant_commits != committed.constant_commits {
+            if recomputed.constant_commits_0 != committed.constant_commits_0 
+                || recomputed.constant_commits_1 != committed.constant_commits_1 {
                 return Err(format!("instance {idx}: constant_commits mismatch"));
             }
             if recomputed.h_msg != committed.h_msg {
@@ -113,16 +128,38 @@ pub fn verify_finalized_instances(
         let idx = data.index;
         let committed = &package.commits[idx];
 
-        if gc_ciphertexts_commit(&data.gc_ciphertexts) != committed.com_gc {
-            return Err(format!("instance {idx}: gc_ciphertexts do not match com_gc"));
+
+        for i in 0..3 {
+            if gc_ciphertexts_commit(&data.gc_ciphertexts[i]) != committed.com_gc[i] {
+                return Err(format!("instance {idx}: gc_ciphertexts do not match com_gc"));
+            }    
         }
-        if data.adaptor_table.commit() != committed.com_adaptor {
+        
+        if data.adaptor_tables[0].commit() != committed.com_adaptor[0] 
+        || data.adaptor_tables[1].commit() != committed.com_adaptor[1] {
             return Err(format!("instance {idx}: adaptor_table does not match com_adaptor"));
         }
-        if h_256(&data.constant_labels[0].0) != committed.constant_commits[0][0] || 
-            h_256(&data.constant_labels[1].0) != committed.constant_commits[1][1] {
+        
+        // verify constant labels
+        if h_256(&data.constant_labels_0[0].0) != committed.constant_commits_0[0][0] || 
+            h_256(&data.constant_labels_0[1].0) != committed.constant_commits_0[1][1] ||
+            h_256(&data.constant_labels_1[0].0) != committed.constant_commits_1[0][0] ||
+            h_256(&data.constant_labels_1[1].0) != committed.constant_commits_1[1][1] {
             return Err(format!("instance {idx}: constant_commits do not match"));
         }
+        let x_bits = Fq::to_bits(Fq::as_montgomery(data.b.x));
+        let y_bits = Fq::to_bits(Fq::as_montgomery(data.b.y));
+        for (i, bit) in x_bits.iter().enumerate() {
+            if h_256(&data.constant_labels_1[i + 2].0) != committed.constant_commits_1[i + 2][*bit as usize] {
+                return Err(format!("instance {idx}: constant_commits do not match"));
+            }
+        }
+        for (i, bit) in y_bits.iter().enumerate() {
+            if h_256(&data.constant_labels_1[i + 2 + 254].0) != committed.constant_commits_1[i + 2 + 254][*bit as usize] {
+                return Err(format!("instance {idx}: constant_commits do not match"));
+            }
+        }
+        
         let mut ct_bytes = Vec::new();
         ct_bytes.extend_from_slice(&data.ct_setup.ct2_r_delta_g2);
         ct_bytes.extend_from_slice(&data.ct_setup.ct3_masked_msg);

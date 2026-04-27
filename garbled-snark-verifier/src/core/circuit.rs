@@ -109,10 +109,10 @@ impl Circuit {
         }
     }
 
-    pub fn set_witness_value(&mut self, witness: &[bool]) {
+    pub fn set_witness_value(&mut self, witness: &[bool], skip: usize) {
         // Gate wires are Rc<RefCell<Wire>> sharing the same data as self.0, so this covers all.
         witness.iter()
-            .zip(self.0.iter().skip(2))
+            .zip(self.0.iter().skip(skip))
             .for_each(|(bit, wirex)| wirex.borrow_mut().set_value_for_uninitialized(*bit));
     }
 

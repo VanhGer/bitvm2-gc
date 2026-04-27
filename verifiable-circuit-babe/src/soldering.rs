@@ -85,12 +85,16 @@ pub fn build_soldered_wires_input(
             .iter()
             .map(|&idx| {
                 let inst = &verifier.instances[idx];
-                let delta = inst.secrets.delta;
-                inst.secrets
-                    .encoding_keys
-                    .iter()
-                    .map(|&ek| (ek.0, (ek ^ delta).0))
-                    .collect()
+                let delta = &inst.secrets.delta;
+                let encoding_keys = &inst.secrets.encoding_keys;
+
+                (0..2)
+                    .flat_map(|i| {
+                        encoding_keys[i]
+                            .iter()
+                            .map(move |&ek| (ek.0, (ek ^ delta[i]).0))
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect(),
     )
