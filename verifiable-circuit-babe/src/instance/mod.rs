@@ -4,7 +4,7 @@ use ark_ec::pairing::Pairing;
 use ark_ff::UniformRand;
 use garbled_snark_verifier::bag::{Circuit, S};
 use crate::babe::WeKnownPi1SetupCt;
-use crate::gc::{build_base_table_bits, SparseAdaptorTable, CONSTANT_SIZE};
+use crate::gc::{build_l2_table_bits, SparseAdaptorTable, CONSTANT_SIZE};
 use crate::instance::secret::InstanceSecrets;
 use ark_groth16::VerifyingKey as Groth16VerifyingKey;
 use ark_serialize::CanonicalSerialize;
@@ -53,7 +53,7 @@ impl BABEInstance {
 
         // Compute r·L_i = r * sum(gamma_abc[num_static+1..]) and build the precomputed table.
         let base = vk.gamma_abc_g1[2] * secrets.r;
-        let table_bits = build_base_table_bits(&base.into_affine());
+        let table_bits = build_l2_table_bits(&base.into_affine());
 
         // Compute r·B bit representation (Montgomery form) for use as constant wires.
         let rb_x_bits: Vec<bool> = DvFq::to_bits(DvFq::as_montgomery(secrets.r_b.x));
@@ -111,7 +111,7 @@ impl BABEInstance {
             })
             .collect();
 
-        let adaptor_table = SparseAdaptorTable::build_from_r_and_labels(
+        let adaptor_table = SparseAdaptorTable::build_from_r_and_u_bar_labels(
             secrets.r,
             &output_labels,
             &secrets.rhos,

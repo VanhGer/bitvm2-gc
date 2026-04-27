@@ -64,7 +64,7 @@ pub fn read_fresh_circuit() -> (Circuit, Vec<usize>) {
 pub fn generate_and_write_fresh_circuit() {
     reset_gid();
     let g = G1Affine::generator();
-    let (bld, output_indices) = compile_dsgc(g);
+    let (bld, output_indices) = compile_fgc(g);
     let circuit = bld.build(&[]);
 
     // --- Serialize ---
@@ -91,7 +91,7 @@ mod tests {
     use ark_bn254::G1Affine;
     use ark_ec::AffineRepr;
     use garbled_snark_verifier::core::utils::reset_gid;
-    use super::{compile_dsgc, generate_and_write_fresh_circuit};
+    use super::{compile_fgc, generate_and_write_fresh_circuit};
 
     #[test]
     #[ignore]
@@ -100,7 +100,7 @@ mod tests {
 
         reset_gid();
         let g = G1Affine::generator();
-        let (bld, output_indices) = compile_dsgc(g);
+        let (bld, output_indices) = compile_fgc(g);
         let circuit = bld.build(&[]);
         let num_wires = circuit.0.len() as u32;
 
