@@ -1,7 +1,7 @@
 use ark_bn254::Fr;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ec::pairing::Pairing;
-use ark_ff::UniformRand;
+use ark_ff::{UniformRand, Zero};
 use garbled_snark_verifier::bag::{Circuit, S};
 use crate::babe::WeKnownPi1SetupCt;
 use crate::gc::{build_l2_table_bits, SparseAdaptorTable, SGC_PART1_CONSTANT_SIZE, WINDOW_ENTRIES};
@@ -91,36 +91,36 @@ impl CACInstance {
         );
         assert_eq!(fgc_output_labels.len(), 2 * U_BAR_SIZE);
         println!("cac instance fgc done");
-        // // Sgc - part 1
-        // let sgc_part1_witness: Vec<bool> = DvFr::to_bits(x_d);
-        // let (sgc_ciphertext_1, sgc_output_labels_1) = get_ciphertext_and_output_labels(
-        //     &mut sgc,
-        //     &sgc_indices,
-        //     &sgc_part1_witness,
-        //     secrets.delta[1],
-        //     SGC_PART1_CONSTANT_SIZE,
-        // );
-        // println!("cac instance sgc part1 done");
-        // assert_eq!(sgc_output_labels_1.len(), 2 * Q_SIZE);
-        // // Sgc - part 2
-        // // Reuse the fgc structure, by setting up the input & constant labels again, then evaluate.
-        // fgc.reset_circuit_except_constants();
-        // // set label of part2 as output of part1
-        // for (i, &key) in sgc_output_labels_1.iter().step_by(2).enumerate()  {
-        //     fgc.0[2 + i].borrow_mut().label = Some(S(key));
-        // }
-        // // set constant for part2
-        // set_gc_const_labels(&mut fgc, &secrets.constant_0labels[1][0..2]);
-        // // random eval
-        // let (sgc_ciphertext_2, sgc_output_labels_2) = get_ciphertext_and_output_labels(
-        //     &mut fgc,
-        //     &fgc_indices,
-        //     &fgc_witness,
-        //     secrets.delta[1],
-        //     2
-        // );
-        // assert_eq!(sgc_output_labels_2.len(), 2 * U_BAR_SIZE);
-        // println!("cac instance sgc part 2 done");
+        // Sgc - part 1
+        let sgc_part1_witness: Vec<bool> = DvFr::to_bits(x_d);
+        let (sgc_ciphertext_1, sgc_output_labels_1) = get_ciphertext_and_output_labels(
+            &mut sgc,
+            &sgc_indices,
+            &sgc_part1_witness,
+            secrets.delta[1],
+            SGC_PART1_CONSTANT_SIZE,
+        );
+        println!("cac instance sgc part1 done");
+        assert_eq!(sgc_output_labels_1.len(), 2 * Q_SIZE);
+        // Sgc - part 2
+        // Reuse the fgc structure, by setting up the input & constant labels again, then evaluate.
+        fgc.reset_circuit_except_constants();
+        // set label of part2 as output of part1
+        for (i, &key) in sgc_output_labels_1.iter().step_by(2).enumerate()  {
+            fgc.0[2 + i].borrow_mut().label = Some(S(key));
+        }
+        // set constant for part2
+        set_gc_const_labels(&mut fgc, &secrets.constant_0labels[1][0..2]);
+        // random eval
+        let (sgc_ciphertext_2, sgc_output_labels_2) = get_ciphertext_and_output_labels(
+            &mut fgc,
+            &fgc_indices,
+            &fgc_witness,
+            secrets.delta[1],
+            2
+        );
+        assert_eq!(sgc_output_labels_2.len(), 2 * U_BAR_SIZE);
+        println!("cac instance sgc part 2 done");
         // generate adaptor table
         // fgc
         let fgc_adaptor_table = SparseAdaptorTable::build_from_r_and_u_bar_labels(
@@ -130,33 +130,31 @@ impl CACInstance {
             &secrets.fq_deltas[0],
         );
 
-        // test table
-
-        // size = gc_output_indices
-        let output_labels: Vec<[u8; 16]> = fgc_indices
-            .iter()
-            .map(|idx| {
-                let label_0 = fgc.0[*idx]
-                    .borrow()
-                    .label.unwrap().0;
-                label_0
-            })
-            .collect();
-
-        let ct1_bytes = BABEProver::eval_adaptor_table(
-            &output_labels, pi1, &fgc_adaptor_table
-        );
-        let mut expected_ct1_bytes = Vec::new();
-        (pi1 * secrets.r).into_affine().serialize_compressed(&mut expected_ct1_bytes).expect("serialize r·G1P");
-        assert_eq!(ct1_bytes, expected_ct1_bytes);
-        println!("eval correctly");
-
-        // let sgc_adaptor_table = SparseAdaptorTable::build_from_r_and_u_bar_labels(
-        //     secrets.r,
-        //     &sgc_output_labels_2,
-        //     &secrets.rhos[1],
-        //     &secrets.fq_deltas[1],
+        // // test table
+        //
+        // // size = gc_output_indices
+        // let output_labels: Vec<[u8; 16]> = fgc_indices
+        //     .iter()
+        //     .map(|idx| {
+        //         let w = fgc.0[*idx].borrow();
+        //         w.select_with_delta(w.get_value(), secrets.delta[0]).0
+        //     })
+        //     .collect();
+        //
+        // let ct1_bytes = BABEProver::eval_adaptor_table(
+        //     &output_labels, pi1, &fgc_adaptor_table
         // );
+        // let mut expected_ct1_bytes = Vec::new();
+        // (pi1 * secrets.r).into_affine().serialize_compressed(&mut expected_ct1_bytes).expect("serialize r·G1P");
+        // assert_eq!(ct1_bytes, expected_ct1_bytes);
+        // println!("eval correctly");
+
+        let sgc_adaptor_table = SparseAdaptorTable::build_from_r_and_u_bar_labels(
+            secrets.r,
+            &sgc_output_labels_2,
+            &secrets.rhos[1],
+            &secrets.fq_deltas[1],
+        );
 
         let ct_setup = Self::enc_setup(
             &secrets,
@@ -170,10 +168,10 @@ impl CACInstance {
             seed,
             secrets,
             ct_setup,
-            // adaptor_tables: [fgc_adaptor_table, sgc_adaptor_table],
-            adaptor_tables: [fgc_adaptor_table.clone(), fgc_adaptor_table],
-            // ciphertexts_sets: [fgc_ciphertext, sgc_ciphertext_1, sgc_ciphertext_2],
-            ciphertexts_sets: [fgc_ciphertext.clone(), fgc_ciphertext.clone(), fgc_ciphertext],
+            adaptor_tables: [fgc_adaptor_table, sgc_adaptor_table],
+            // adaptor_tables: [fgc_adaptor_table.clone(), fgc_adaptor_table],
+            ciphertexts_sets: [fgc_ciphertext, sgc_ciphertext_1, sgc_ciphertext_2],
+            // ciphertexts_sets: [fgc_ciphertext.clone(), fgc_ciphertext.clone(), fgc_ciphertext],
         })
     }
 
@@ -307,10 +305,8 @@ fn get_ciphertext_and_output_labels(
     let output_labels: Vec<[u8; 16]> = output_indices
         .iter()
         .flat_map(|idx| {
-            let label_0 = circuit.0[*idx]
-                .borrow()
-                .select_with_delta(circuit.0[*idx].borrow().get_value(), delta);
-            [label_0.0, (label_0 ^ delta).0]
+            let l0 = circuit.0[*idx].borrow().label.unwrap();
+            [l0.0, (l0 ^ delta).0]
         })
         .collect();
 
@@ -322,6 +318,7 @@ mod tests {
     use super::*;
     use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
     use rand::SeedableRng;
+    use garbled_snark_verifier::circuits::bn254::g1::G1Affine;
     use crate::babe::DummyMulCircuit;
     use crate::prover::BABEProver;
 
@@ -354,12 +351,12 @@ mod tests {
         let r = instance.secrets.r;
         let b_blind = instance.secrets.b;
         let pi1 = proof.a;
-
-        // evaluate the fgc to get the r * pi_1
         let constant_labels = instance.get_2_circuit_constant_labels();
         let pi1_labels = instance.compute_pi1_labels_based_on_value(proof.a);
-        // let xd_labels = instance.compute_x_d_labels_based_on_value(dynamic_inputs);
+        let x_d_labels = instance.compute_x_d_labels_based_on_value(dynamic_inputs);
         let (mut fgc, fgc_indices, mut sgc, sgc_indices) = crate::gc::read_fresh_gc();
+
+        // evaluate the fgc to get the r * pi_1
         set_gc_const_labels(&mut fgc, &constant_labels[0]);
         for (i, &lbl) in pi1_labels.iter().enumerate() {
             fgc.0[i + 2].borrow_mut().label = Some(lbl);
@@ -380,26 +377,78 @@ mod tests {
         );
         let mut expected_ct1_bytes = Vec::new();
         (pi1 * r).into_affine().serialize_compressed(&mut expected_ct1_bytes).expect("serialize r·G1P");
-        assert_eq!(ct1_bytes, expected_ct1_bytes);
+        assert_eq!(ct1_bytes, expected_ct1_bytes, "fgc is wrong");
+        println!("fgc test done");
 
+        // evaluate the sgc part 1 to get the Q
+        set_gc_const_labels(&mut sgc, &constant_labels[1]);
+        for (i, &lbl) in x_d_labels.iter().enumerate() {
+            sgc.0[i + SGC_PART1_CONSTANT_SIZE].borrow_mut().label = Some(lbl);
+        }
+        let b_x_bits: Vec<bool> = DvFq::to_bits(DvFq::as_montgomery(b_blind.x));
+        let b_y_bits: Vec<bool> = DvFq::to_bits(DvFq::as_montgomery(b_blind.y));
+        for (i, bit) in b_x_bits.iter().enumerate() {
+            sgc.0[2 + i].borrow_mut().value = Some(*bit);
+        }
+        for (i, bit) in b_y_bits.iter().enumerate() {
+            sgc.0[2 + 254 + i].borrow_mut().value = Some(*bit);
+        }
+        let sgc_part1_witness: Vec<bool> = DvFr::to_bits(dynamic_inputs);
+        let sgc_output_labels_1 = BABEProver::eval_circuit_with_ciphertext(
+            &mut sgc,
+            &sgc_indices,
+            &sgc_part1_witness,
+            &instance.ciphertexts_sets[1],
+            SGC_PART1_CONSTANT_SIZE
+        );
+        // check that sgc computed correctly
+        let q_proj = vk.gamma_abc_g1[2].into_group() * dynamic_inputs + b_blind;
+        let q_affine = q_proj.into_affine();
+        let q_value_bits = G1Affine::to_bits(q_affine);
+        for (k, &idx) in sgc_indices.iter().enumerate() {
+            let w_val = sgc.0[idx].borrow().get_value();
+            let q_val = q_value_bits[k];
+            assert_eq!(w_val, q_val, "sgc part 1: mismatch at k={k}: wire={w_val}, q_val={q_val}");
+        }
+        println!("sgc part 1 test done");
 
+        // evaluate the sgc part2 to get the r * Q
+        fgc.reset_circuit_except_constants();
+        // set label of part2 as output of part1 (evaluator has one active label per wire)
+        for (i, &key) in sgc_output_labels_1.iter().enumerate()  {
+            fgc.0[2 + i].borrow_mut().label = Some(S(key));
+        }
+        set_gc_const_labels(&mut fgc, &constant_labels[1][0..2]);
+        let sgc_witness: Vec<bool> = DvFq::to_bits(q_affine.x)
+            .into_iter()
+            .chain(DvFq::to_bits(q_affine.y).into_iter())
+            .collect();
+        let sgc_output_labels_2 = BABEProver::eval_circuit_with_ciphertext(
+            &mut fgc,
+            &fgc_indices,
+            &sgc_witness,
+            &instance.ciphertexts_sets[2],
+            2
+        );
+        let ct1_prime = BABEProver::eval_adaptor_table(
+            &sgc_output_labels_2, q_affine, &instance.adaptor_tables[1]
+        );
 
+        let mut expected_ct1_prime_bytes = Vec::new();
+        (q_affine * r).into_affine().serialize_compressed(&mut expected_ct1_prime_bytes).expect("serialize r·G1P");
+        assert_eq!(ct1_bytes, expected_ct1_bytes, "sgc part2 is wrong");
+        println!("sgc part 2 test done");
 
-        // // Simulate DSGC output: c1' = r·P_D + r·B
-        // // P_D = (a*a) · gamma_abc[|S|+1] = (a*a) · gamma_abc[2]
-        // let p_d = vk.gamma_abc_g1[2].into_group() * dynamic_inputs;
-        // let ct1_prime = (p_d * r + instance.secrets.b * r);
-        // let ctprove = WeKnownPi1ProveCt {
-        //     ct1_r_pi1: g1_to_ser(proof.a.into_group() * r),
-        //     ct1_prime: g1_to_ser(ct1_prime),
-        // };
-        // let decrypted = we_known_pi1_dec(
-        //     &vk, &instance.ct_setup, &ctprove,
-        //     proof.b.into_group(), proof.c.into_group(),
-        // ).unwrap();
-        //
-        // println!("decrypted done");
-        //
-        // assert_eq!(decrypted.as_slice(), &instance.secrets.msg);
+        let ctprove = WeKnownPi1ProveCt {
+            ct1_r_pi1: ct1_bytes,
+            ct1_prime,
+        };
+        let decrypted = we_known_pi1_dec(
+            &vk, &instance.ct_setup, &ctprove,
+            proof.b.into_group(), proof.c.into_group(),
+        ).unwrap();
+
+        println!("decrypted done");
+        assert_eq!(decrypted.as_slice(), &instance.secrets.msg);
     }
 }

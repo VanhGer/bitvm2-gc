@@ -6,7 +6,7 @@ use garbled_snark_verifier::circuits::sect233k1::builder::{CircuitAdapter, Circu
 use garbled_snark_verifier::dv_bn254::basic::selector;
 use garbled_snark_verifier::dv_bn254::fp254impl::Fp254Impl;
 use garbled_snark_verifier::dv_bn254::{fq::Fq, fr::Fr};
-use garbled_snark_verifier::dv_bn254::g1::G1Projective as GcG1Projective;
+use garbled_snark_verifier::dv_bn254::g1::{projective_to_affine_montgomery, G1Projective as GcG1Projective, G1Projective};
 
 use crate::dre::{N, Q_SIZE, U_BAR_SIZE};
 
@@ -141,16 +141,22 @@ fn emit_scalar_mul_then_add(
 
     // Convert projective Montgomery (X·R, Y·R, Z·R) → standard affine (x, y)
     // x = X/Z, y = Y/Z via Fermat inversion of Z in the Montgomery domain
-    let x_m = &result_proj_m[..N];
-    let y_m = &result_proj_m[N..2 * N];
-    let z_m = &result_proj_m[2 * N..];
-    let z_inv_m = fq_inverse_montgomery(bld, z_m);
-    let x_std = Fq::mul_montgomery(bld, x_m, &z_inv_m);
-    let y_std = Fq::mul_montgomery(bld, y_m, &z_inv_m);
+    let x_m: [usize; N] = result_proj_m[..N].try_into().unwrap();
+    let y_m: [usize; N] = result_proj_m[N..2 * N].try_into().unwrap();
+    let z_m: [usize; N] = result_proj_m[2 * N..].try_into().unwrap();
+    let mont_res_proj = G1Projective {
+        x: Fq(x_m),
+        y: Fq(y_m),
+        z: Fq(z_m),
+    };
+    let (mont_res_affine, is_valid) = projective_to_affine_montgomery(bld, &mont_res_proj);
+    // convert back to standard form
+    let x_q = Fq::mul_by_constant_montgomery(bld, &mont_res_affine.x.0, ark_bn254::Fq::from(1u64));
+    let y_q = Fq::mul_by_constant_montgomery(bld, &mont_res_affine.y.0, ark_bn254::Fq::from(1u64));
 
     let mut output = Vec::with_capacity(Q_SIZE);
-    output.extend_from_slice(&x_std);
-    output.extend_from_slice(&y_std);
+    output.extend_from_slice(&x_q);
+    output.extend_from_slice(&y_q);
     assert_eq!(output.len(), Q_SIZE);
     output
 }

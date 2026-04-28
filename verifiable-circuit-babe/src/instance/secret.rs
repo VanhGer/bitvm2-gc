@@ -37,7 +37,7 @@ impl InstanceSecrets {
 
         let encoding_keys = [gen_s(&mut rng, 2 * N), gen_s(&mut rng, N)];
 
-        let constant_val_labels = [gen_s(&mut rng, N), gen_s(&mut rng, 2 + 2 * N)];
+        let constant_val_labels = [gen_s(&mut rng, 2), gen_s(&mut rng, 2 + 2 * N)];
 
         let rhos = [sample_rhos(&mut rng), sample_rhos(&mut rng)];
 

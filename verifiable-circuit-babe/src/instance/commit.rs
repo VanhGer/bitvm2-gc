@@ -1,4 +1,3 @@
-use crate::babe::compute_epk_with_delta;
 use crate::gc::gc_ciphertexts_commit;
 use crate::instance::CACInstance;
 use crate::utils::{derive_hashlock, h_256};
@@ -23,14 +22,22 @@ pub struct CACInstanceCommit {
 }
 
 impl CACInstanceCommit {
-    // Todo: add x_d
     pub fn from_instance(instance: &CACInstance) -> Self {
         let delta = instance.secrets.delta;
 
-        let input_commits = compute_epk_with_delta(
-            &instance.secrets.encoding_keys, &delta
-        ).0;
-        
+        let input_commits = {
+            let fgc_pairs: Vec<[[u8; 20]; 2]> = instance.secrets.encoding_keys[0]
+                .iter()
+                .map(|&key| [derive_hashlock(&key.0), derive_hashlock(&(key ^ delta[0]).0)])
+                .collect();
+            let sgc_pairs: Vec<[[u8; 20]; 2]> = instance.secrets.encoding_keys[1]
+                .iter()
+                .map(|&key| [derive_hashlock(&key.0), derive_hashlock(&(key ^ delta[1]).0)])
+                .collect();
+            let pairs: Vec<[[u8; 20]; 2]> = fgc_pairs.into_iter().chain(sgc_pairs).collect();
+            pairs
+        };
+
         let constant_commits_0 = std::array::from_fn(|w| {
             let l0 = instance.secrets.constant_0labels[0][w];
             [h_256(&l0.0), h_256(&(l0 ^ delta[0]).0)]
@@ -55,7 +62,7 @@ impl CACInstanceCommit {
                 gc_ciphertexts_commit(&instance.ciphertexts_sets[0]),
                 gc_ciphertexts_commit(&instance.ciphertexts_sets[1]),
                 gc_ciphertexts_commit(&instance.ciphertexts_sets[2]),
-                ]
+            ]
         }
     }
 }
