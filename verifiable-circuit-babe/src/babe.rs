@@ -2,6 +2,8 @@ use ark_bn254::{Bn254, Fr, G1Affine};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
 use ark_groth16::{Proof as Groth16Proof, VerifyingKey as Groth16VerifyingKey};
+use ark_groth16::ProvingKey as Groth16ProvingKey;
+
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_relations::lc;
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
@@ -107,6 +109,7 @@ pub struct WeKnownPi1SetupCt {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WeKnownPi1ProveCt {
     pub ct1_r_pi1: Vec<u8>,
+    pub ct1_prime: Vec<u8>, // r * Q
 }
 
 // ─── Setup state ─────────────────────────────────────────────────────────────
@@ -168,7 +171,7 @@ pub fn babe_verifier_open_and_solder(
         finalized_indices: finalized_indices.to_vec(),
         soldering_proof: SolderingProof { soldered_output, _proof: PhantomData },
     };
-    
+
     (opened, finalized, soldering, derive_hashlock(&verifier.temp_val))
 }
 
@@ -225,8 +228,8 @@ pub fn babe_verify_prover_presigs(
 
     let h_msgs_valid = challenge_assert_outlock.h_msgs.len() == finalized_indices.len()
         && challenge_assert_outlock.h_msgs.iter().zip(finalized_indices.iter()).all(|(&h_msg, &idx)| {
-            h_msg == package.commits[idx].h_msg
-        });
+        h_msg == package.commits[idx].h_msg
+    });
 
     presigs_valid && keys_valid && h_msgs_valid
 }
@@ -300,13 +303,15 @@ pub fn babe_verifier_challenge_assert_cac(
 /// Prover: given the labels from TxChallengeAssert, evaluate the GC across all finalized
 /// instances (base first, then non-base via soldering deltas) and decrypt the msg.
 pub fn babe_prover_wrongly_challenged_cac(
+    pk: &Groth16ProvingKey<Bn254>,
+    dyn_pubin: Fr,
     challenge_witness: &TxChallengeAssertWitness,
     proof: &Groth16Proof<Bn254>,
     prover_state: &ProverSetupState,
 ) -> Option<(TxWronglyChallengedWitness, usize)> {
     let base_input_labels: Vec<S> = challenge_witness.input_labels.iter().map(|&b| S(b)).collect();
 
-    let mut prover = BABEProver::new(proof.clone());
+    let mut prover = BABEProver::new(pk.clone(), proof.clone(), dyn_pubin);
     let found = prover.check_compute_msg(
         &prover_state.finalized,
         &base_input_labels,
@@ -384,9 +389,13 @@ pub fn we_known_pi1_encsetup(
 }
 
 /// Encprove(crs, π₁; r): ctprove = r·π₁.
-pub fn we_known_pi1_encprove(pi1: ark_bn254::G1Projective, r_bytes: [u8; 32]) -> WeKnownPi1ProveCt {
+pub fn we_known_pi1_encprove(
+    pi1: ark_bn254::G1Projective,
+    r_bytes: [u8; 32],
+    ct1_prime: G1Affine,
+) -> WeKnownPi1ProveCt {
     let r = Fr::from_le_bytes_mod_order(&r_bytes);
-    WeKnownPi1ProveCt { ct1_r_pi1: g1_to_ser(pi1 * r) }
+    WeKnownPi1ProveCt { ct1_r_pi1: g1_to_ser(pi1 * r), ct1_prime: g1_to_ser(ct1_prime.into_group()) }
 }
 
 /// Dec*(vk, ctsetup, ctprove, c1', π₂, π₃):
@@ -396,15 +405,15 @@ pub fn we_known_pi1_dec(
     vk: &Groth16VerifyingKey<Bn254>,
     ctsetup: &WeKnownPi1SetupCt,
     ctprove: &WeKnownPi1ProveCt,
-    c1_prime: G1Affine,
     pi2: ark_bn254::G2Projective,
     pi3: ark_bn254::G1Projective,
 ) -> Option<Vec<u8>> {
     let ct1 = g1_from_ser_checked(&ctprove.ct1_r_pi1)?;
+    let ct1_prime = g1_from_ser_checked(&ctprove.ct1_prime)?;
     let ct2 = g2_from_ser_checked(&ctsetup.ct2_r_delta_g2)?;
 
     let r_y = Bn254::pairing(ct1, pi2) - Bn254::pairing(pi3, ct2);
-    let q_blind = Bn254::pairing(c1_prime, vk.gamma_g2);
+    let q_blind = Bn254::pairing(ct1_prime, vk.gamma_g2);
     let mask_gt = r_y - q_blind;
 
     let mut mask_bytes = Vec::new();
@@ -531,6 +540,8 @@ pub fn run_babe_e2e_cac() -> BabeCACE2ERun {
     // WronglyChallenged: Prover evaluates GC (base first, then non-base if needed).
     println!("Prover: Finding msg...");
     let (wc_witness, instance_id) = babe_prover_wrongly_challenged_cac(
+        &groth16_pk,
+        dynamic_public_inputs,
         &challenge_witness,
         &proof,
         &prover_state,
@@ -623,16 +634,17 @@ mod tests {
         let (ct_setup, r_b_affine) = we_known_pi1_encsetup(
             &vk, &static_inputs, num_dynamic, secret, r_bytes, b_blind,
         ).unwrap();
-        let ctprove = we_known_pi1_encprove(proof.a.into_group(), r_bytes);
-
         // Simulate DSGC: c1' = r·P_D + r·B
         // P_D = (a*a) · gamma_abc[|S|+1] = (a*a) · gamma_abc[2]
         let r = Fr::from_le_bytes_mod_order(&r_bytes);
         let p_d = vk.gamma_abc_g1[2].into_group() * dyn_inputs[0];
         let c1_prime = (p_d * r + r_b_affine.into_group()).into_affine();
 
+        let ct_prove = we_known_pi1_encprove(proof.a.into_group(), r_bytes, c1_prime);
+
+
         let decrypted = we_known_pi1_dec(
-            &vk, &ct_setup, &ctprove, c1_prime, proof.b.into_group(), proof.c.into_group(),
+            &vk, &ct_setup, &ct_prove, proof.b.into_group(), proof.c.into_group(),
         ).unwrap();
         assert_eq!(decrypted, secret);
     }

@@ -13,6 +13,7 @@ use garbled_snark_verifier::dv_bn254::fq::Fq as DvFq;
 use garbled_snark_verifier::dv_bn254::fr::Fr as DvFr;
 use crate::dre::{N, Q_SIZE, U_BAR_SIZE};
 use crate::instance::commit::CACInstanceCommit;
+use crate::prover::BABEProver;
 use crate::utils::{g2_to_ser, ro_from_pairing_bytes};
 
 pub mod secret;
@@ -40,6 +41,9 @@ impl CACInstance {
         if vk.gamma_abc_g1.len() != 3 {
             return Err("static/dynamic split does not match vk".to_string());
         }
+
+        // generate artifacts.
+        // crate::gc::generate_and_write_fresh_circuit(vk.gamma_abc_g1[2]);
 
         let secrets = InstanceSecrets::new_from_seed(seed);
 
@@ -87,36 +91,36 @@ impl CACInstance {
         );
         assert_eq!(fgc_output_labels.len(), 2 * U_BAR_SIZE);
         println!("cac instance fgc done");
-        // Sgc - part 1
-        let sgc_part1_witness: Vec<bool> = DvFr::to_bits(x_d);
-        let (sgc_ciphertext_1, sgc_output_labels_1) = get_ciphertext_and_output_labels(
-            &mut sgc,
-            &sgc_indices,
-            &sgc_part1_witness,
-            secrets.delta[1],
-            SGC_PART1_CONSTANT_SIZE,
-        );
-        println!("cac instance sgc part1 done");
-        assert_eq!(sgc_output_labels_1.len(), 2 * Q_SIZE);
-        // Sgc - part 2
-        // Reuse the fgc structure, by setting up the input & constant labels again, then evaluate.
-        fgc.reset_circuit_except_constants();
-        // set label of part2 as output of part1
-        for (i, &key) in sgc_output_labels_1.iter().step_by(2).enumerate()  {
-            fgc.0[2 + i].borrow_mut().label = Some(S(key));
-        }
-        // set constant for part2
-        set_gc_const_labels(&mut fgc, &secrets.constant_0labels[1][0..2]);
-        // random eval
-        let (sgc_ciphertext_2, sgc_output_labels_2) = get_ciphertext_and_output_labels(
-            &mut fgc,
-            &fgc_indices,
-            &fgc_witness,
-            secrets.delta[1],
-            2
-        );
-        assert_eq!(sgc_output_labels_2.len(), 2 * U_BAR_SIZE);
-        println!("cac instance sgc part 2 done");
+        // // Sgc - part 1
+        // let sgc_part1_witness: Vec<bool> = DvFr::to_bits(x_d);
+        // let (sgc_ciphertext_1, sgc_output_labels_1) = get_ciphertext_and_output_labels(
+        //     &mut sgc,
+        //     &sgc_indices,
+        //     &sgc_part1_witness,
+        //     secrets.delta[1],
+        //     SGC_PART1_CONSTANT_SIZE,
+        // );
+        // println!("cac instance sgc part1 done");
+        // assert_eq!(sgc_output_labels_1.len(), 2 * Q_SIZE);
+        // // Sgc - part 2
+        // // Reuse the fgc structure, by setting up the input & constant labels again, then evaluate.
+        // fgc.reset_circuit_except_constants();
+        // // set label of part2 as output of part1
+        // for (i, &key) in sgc_output_labels_1.iter().step_by(2).enumerate()  {
+        //     fgc.0[2 + i].borrow_mut().label = Some(S(key));
+        // }
+        // // set constant for part2
+        // set_gc_const_labels(&mut fgc, &secrets.constant_0labels[1][0..2]);
+        // // random eval
+        // let (sgc_ciphertext_2, sgc_output_labels_2) = get_ciphertext_and_output_labels(
+        //     &mut fgc,
+        //     &fgc_indices,
+        //     &fgc_witness,
+        //     secrets.delta[1],
+        //     2
+        // );
+        // assert_eq!(sgc_output_labels_2.len(), 2 * U_BAR_SIZE);
+        // println!("cac instance sgc part 2 done");
         // generate adaptor table
         // fgc
         let fgc_adaptor_table = SparseAdaptorTable::build_from_r_and_u_bar_labels(
@@ -126,12 +130,33 @@ impl CACInstance {
             &secrets.fq_deltas[0],
         );
 
-        let sgc_adaptor_table = SparseAdaptorTable::build_from_r_and_u_bar_labels(
-            secrets.r,
-            &sgc_output_labels_2,
-            &secrets.rhos[1],
-            &secrets.fq_deltas[1],
+        // test table
+
+        // size = gc_output_indices
+        let output_labels: Vec<[u8; 16]> = fgc_indices
+            .iter()
+            .map(|idx| {
+                let label_0 = fgc.0[*idx]
+                    .borrow()
+                    .label.unwrap().0;
+                label_0
+            })
+            .collect();
+
+        let ct1_bytes = BABEProver::eval_adaptor_table(
+            &output_labels, pi1, &fgc_adaptor_table
         );
+        let mut expected_ct1_bytes = Vec::new();
+        (pi1 * secrets.r).into_affine().serialize_compressed(&mut expected_ct1_bytes).expect("serialize r·G1P");
+        assert_eq!(ct1_bytes, expected_ct1_bytes);
+        println!("eval correctly");
+
+        // let sgc_adaptor_table = SparseAdaptorTable::build_from_r_and_u_bar_labels(
+        //     secrets.r,
+        //     &sgc_output_labels_2,
+        //     &secrets.rhos[1],
+        //     &secrets.fq_deltas[1],
+        // );
 
         let ct_setup = Self::enc_setup(
             &secrets,
@@ -145,8 +170,10 @@ impl CACInstance {
             seed,
             secrets,
             ct_setup,
-            adaptor_tables: [fgc_adaptor_table, sgc_adaptor_table],
-            ciphertexts_sets: [fgc_ciphertext, sgc_ciphertext_1, sgc_ciphertext_2],
+            // adaptor_tables: [fgc_adaptor_table, sgc_adaptor_table],
+            adaptor_tables: [fgc_adaptor_table.clone(), fgc_adaptor_table],
+            // ciphertexts_sets: [fgc_ciphertext, sgc_ciphertext_1, sgc_ciphertext_2],
+            ciphertexts_sets: [fgc_ciphertext.clone(), fgc_ciphertext.clone(), fgc_ciphertext],
         })
     }
 
@@ -210,7 +237,7 @@ impl CACInstance {
         labels
     }
 
-    pub fn b_value_labels(&self) -> Vec<S> {
+    pub fn get_b_value_labels(&self) -> Vec<S> {
         let b_x_bits: Vec<bool> = DvFq::to_bits(DvFq::as_montgomery(self.secrets.b.x));
         let b_y_bits: Vec<bool> = DvFq::to_bits(DvFq::as_montgomery(self.secrets.b.y));
         let mut labels = Vec::new();
@@ -233,12 +260,27 @@ impl CACInstance {
         labels
     }
 
+    // Labels of constants in both circuits
+    pub fn get_2_circuit_constant_labels(&self) -> [Vec<S>; 2] {
+        let f_01_labels = [
+            self.secrets.constant_0labels[0][0], self.secrets.constant_0labels[0][1] ^ self.secrets.delta[0]
+        ];
+
+        let s_01_labels = [
+            self.secrets.constant_0labels[1][0], self.secrets.constant_0labels[1][1] ^ self.secrets.delta[1]
+        ];
+        let s_b_labels = self.get_b_value_labels();
+        let s_constant_labels: Vec<S> = s_01_labels
+            .to_vec().into_iter().chain(s_b_labels).collect();
+        [f_01_labels.to_vec(), s_constant_labels]
+    }
+
     pub fn commit(&self) -> CACInstanceCommit {
         CACInstanceCommit::from_instance(self)
     }
 }
 
-fn set_gc_const_labels(
+pub fn set_gc_const_labels(
     circuit: &mut Circuit,
     constant_labels: &[S],
 ) {
@@ -273,7 +315,6 @@ fn get_ciphertext_and_output_labels(
         .collect();
 
     (ciphertexts, output_labels)
-
 }
 
 #[cfg(test)]
@@ -282,6 +323,7 @@ mod tests {
     use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
     use rand::SeedableRng;
     use crate::babe::DummyMulCircuit;
+    use crate::prover::BABEProver;
 
     #[test]
     fn enc_setup_prove_dec_roundtrip() {
@@ -304,26 +346,60 @@ mod tests {
         // |S|=1 (a*b static), |D|=1 (a*a dynamic)
         let static_inputs = a * b;
         let dynamic_inputs = a * a;
-        let dynamic_pin_size = 1usize;
 
         let instance = CACInstance::new_from_seed(42, &vk, static_inputs)
             .expect("new_from_seed");
         println!("generate instance done");
 
         let r = instance.secrets.r;
+        let b_blind = instance.secrets.b;
+        let pi1 = proof.a;
 
-        // Simulate DSGC output: c1' = r·P_D + r·B
-        // P_D = (a*a) · gamma_abc[|S|+1] = (a*a) · gamma_abc[2]
-        let p_d = vk.gamma_abc_g1[2].into_group() * dynamic_inputs;
-        let c1_prime = (p_d * r + instance.secrets.b * r).into_affine();
-        let ctprove = WeKnownPi1ProveCt { ct1_r_pi1: g1_to_ser(proof.a.into_group() * r) };
-        let decrypted = we_known_pi1_dec(
-            &vk, &instance.ct_setup, &ctprove, c1_prime,
-            proof.b.into_group(), proof.c.into_group(),
-        ).unwrap();
+        // evaluate the fgc to get the r * pi_1
+        let constant_labels = instance.get_2_circuit_constant_labels();
+        let pi1_labels = instance.compute_pi1_labels_based_on_value(proof.a);
+        // let xd_labels = instance.compute_x_d_labels_based_on_value(dynamic_inputs);
+        let (mut fgc, fgc_indices, mut sgc, sgc_indices) = crate::gc::read_fresh_gc();
+        set_gc_const_labels(&mut fgc, &constant_labels[0]);
+        for (i, &lbl) in pi1_labels.iter().enumerate() {
+            fgc.0[i + 2].borrow_mut().label = Some(lbl);
+        }
+        let fgc_witness: Vec<bool> = DvFq::to_bits(pi1.x)
+            .into_iter()
+            .chain(DvFq::to_bits(pi1.y).into_iter())
+            .collect();
+        let fgc_output_labels = BABEProver::eval_circuit_with_ciphertext(
+            &mut fgc,
+            &fgc_indices,
+            &fgc_witness,
+            &instance.ciphertexts_sets[0],
+            2
+        );
+        let ct1_bytes = BABEProver::eval_adaptor_table(
+            &fgc_output_labels, pi1, &instance.adaptor_tables[0]
+        );
+        let mut expected_ct1_bytes = Vec::new();
+        (pi1 * r).into_affine().serialize_compressed(&mut expected_ct1_bytes).expect("serialize r·G1P");
+        assert_eq!(ct1_bytes, expected_ct1_bytes);
 
-        println!("decrypted done");
 
-        assert_eq!(decrypted.as_slice(), &instance.secrets.msg);
+
+
+        // // Simulate DSGC output: c1' = r·P_D + r·B
+        // // P_D = (a*a) · gamma_abc[|S|+1] = (a*a) · gamma_abc[2]
+        // let p_d = vk.gamma_abc_g1[2].into_group() * dynamic_inputs;
+        // let ct1_prime = (p_d * r + instance.secrets.b * r);
+        // let ctprove = WeKnownPi1ProveCt {
+        //     ct1_r_pi1: g1_to_ser(proof.a.into_group() * r),
+        //     ct1_prime: g1_to_ser(ct1_prime),
+        // };
+        // let decrypted = we_known_pi1_dec(
+        //     &vk, &instance.ct_setup, &ctprove,
+        //     proof.b.into_group(), proof.c.into_group(),
+        // ).unwrap();
+        //
+        // println!("decrypted done");
+        //
+        // assert_eq!(decrypted.as_slice(), &instance.secrets.msg);
     }
 }

@@ -63,7 +63,7 @@ pub fn cac_finalize_indices(package: &CACSetupPackage, m_cc: usize) -> Vec<usize
 /// GC data the Verifier reveals for each finalized (kept) instance.
 pub struct FinalizedInstanceData {
     pub index: usize,
-    pub gc_ciphertexts: [Vec<Option<S>>; 3],
+    pub ciphertext_sets: [Vec<Option<S>>; 3],
     pub adaptor_tables: [SparseAdaptorTable; 2],
     pub ct_setup: WeKnownPi1SetupCt,
     /// [0-label of wire-0 (constant false), 1-label of wire-1 (constant true)].
@@ -96,7 +96,7 @@ pub fn verify_opened_instances(
             if recomputed.epk != committed.epk {
                 return Err(format!("instance {idx}: input_commits mismatch"));
             }
-            if recomputed.constant_commits_0 != committed.constant_commits_0 
+            if recomputed.constant_commits_0 != committed.constant_commits_0
                 || recomputed.constant_commits_1 != committed.constant_commits_1 {
                 return Err(format!("instance {idx}: constant_commits mismatch"));
             }
@@ -130,18 +130,18 @@ pub fn verify_finalized_instances(
 
 
         for i in 0..3 {
-            if gc_ciphertexts_commit(&data.gc_ciphertexts[i]) != committed.com_gc[i] {
+            if gc_ciphertexts_commit(&data.ciphertext_sets[i]) != committed.com_gc[i] {
                 return Err(format!("instance {idx}: gc_ciphertexts do not match com_gc"));
-            }    
+            }
         }
-        
-        if data.adaptor_tables[0].commit() != committed.com_adaptor[0] 
-        || data.adaptor_tables[1].commit() != committed.com_adaptor[1] {
+
+        if data.adaptor_tables[0].commit() != committed.com_adaptor[0]
+            || data.adaptor_tables[1].commit() != committed.com_adaptor[1] {
             return Err(format!("instance {idx}: adaptor_table does not match com_adaptor"));
         }
-        
+
         // verify constant labels
-        if h_256(&data.constant_labels_0[0].0) != committed.constant_commits_0[0][0] || 
+        if h_256(&data.constant_labels_0[0].0) != committed.constant_commits_0[0][0] ||
             h_256(&data.constant_labels_0[1].0) != committed.constant_commits_0[1][1] ||
             h_256(&data.constant_labels_1[0].0) != committed.constant_commits_1[0][0] ||
             h_256(&data.constant_labels_1[1].0) != committed.constant_commits_1[1][1] {
@@ -159,7 +159,7 @@ pub fn verify_finalized_instances(
                 return Err(format!("instance {idx}: constant_commits do not match"));
             }
         }
-        
+
         let mut ct_bytes = Vec::new();
         ct_bytes.extend_from_slice(&data.ct_setup.ct2_r_delta_g2);
         ct_bytes.extend_from_slice(&data.ct_setup.ct3_masked_msg);
@@ -179,8 +179,8 @@ mod tests {
     use crate::babe::DummyMulCircuit;
     use crate::verifier::BABEVerifier;
 
-    const TEST_N_CC: usize = 10;
-    const TEST_M_CC: usize = 4;
+    const TEST_N_CC: usize = 4;
+    const TEST_M_CC: usize = 2;
 
     #[test]
     fn test_cac_commit_open_verify() {

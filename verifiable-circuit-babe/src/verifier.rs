@@ -70,16 +70,16 @@ impl BABEVerifier {
             let constant_labels_0 = [
                 inst.secrets.constant_0labels[0][0], inst.secrets.constant_0labels[0][1] ^ inst.secrets.delta[0]
             ];
-            
+
             let mut constant_labels_1 = vec![
                 inst.secrets.constant_0labels[1][0], inst.secrets.constant_0labels[1][1] ^ inst.secrets.delta[1]
             ];
-            constant_labels_1.extend(inst.b_value_labels());
-            
-            
+            constant_labels_1.extend(inst.get_b_value_labels());
+
+
             finalized.push(crate::cac::FinalizedInstanceData {
                 index: i,
-                gc_ciphertexts: inst.ciphertexts_sets.clone(),
+                ciphertext_sets: inst.ciphertexts_sets.clone(),
                 adaptor_tables: inst.adaptor_tables.clone(),
                 ct_setup: inst.ct_setup.clone(),
                 constant_labels_0,

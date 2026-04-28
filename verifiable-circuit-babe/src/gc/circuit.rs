@@ -1,6 +1,6 @@
 use ark_bn254::G1Affine;
 use ark_ec::CurveGroup;
-use ark_ff::{AdditiveGroup, Zero};
+use ark_ff::{AdditiveGroup, PrimeField, Zero};
 use sha2::{Digest, Sha256};
 use garbled_snark_verifier::circuits::sect233k1::builder::{CircuitAdapter, CircuitTrait};
 use garbled_snark_verifier::dv_bn254::basic::selector;
@@ -95,7 +95,7 @@ fn emit_fgc(
 ///   [Fr::N_BITS..Fr::N_BITS+N)     B_y — y-coordinate of B, Montgomery form (garbler-private)
 ///   [Fr::N_BITS+N..Fr::N_BITS+2·N)  x_d — scalar bits, LSB-first (evaluator input)
 ///
-/// Output: Q_SIZE = 3·N bits — (X, Y, Z) of Q in projective Montgomery form.
+/// Output: Q_SIZE = 2·N bits — (x, y) of Q in standard affine form.
 pub fn compile_sgc_part1(l2: G1Affine) -> (CircuitAdapter, Vec<usize>) {
     let mut bld = CircuitAdapter::default();
 
@@ -122,7 +122,7 @@ pub fn compile_sgc_part1(l2: G1Affine) -> (CircuitAdapter, Vec<usize>) {
 /// Emit: scalar_point = x_d · L_2 (windowed private table) then add affine point P.
 ///
 /// Wire indices for the affine point and table may be input or constant wires.
-/// Output: R_PD_SIZE bits — (X, Y, Z) in projective Montgomery form.
+/// Output: Q_SIZE bits — (x, y) in standard affine form.
 fn emit_scalar_mul_then_add(
     bld: &mut CircuitAdapter,
     x_d: &[usize],
@@ -139,13 +139,47 @@ fn emit_scalar_mul_then_add(
     let result_proj_m =
         GcG1Projective::add_mixed_montgomery_no_inf(bld, &prod_proj_m, &p_affine_m);
 
-    // Output stays in Montgomery form (X·R, Y·R, Z·R)
+    // Convert projective Montgomery (X·R, Y·R, Z·R) → standard affine (x, y)
+    // x = X/Z, y = Y/Z via Fermat inversion of Z in the Montgomery domain
+    let x_m = &result_proj_m[..N];
+    let y_m = &result_proj_m[N..2 * N];
+    let z_m = &result_proj_m[2 * N..];
+    let z_inv_m = fq_inverse_montgomery(bld, z_m);
+    let x_std = Fq::mul_montgomery(bld, x_m, &z_inv_m);
+    let y_std = Fq::mul_montgomery(bld, y_m, &z_inv_m);
+
     let mut output = Vec::with_capacity(Q_SIZE);
-    output.extend_from_slice(&result_proj_m[..N]);
-    output.extend_from_slice(&result_proj_m[N..2 * N]);
-    output.extend_from_slice(&result_proj_m[2 * N..]);
+    output.extend_from_slice(&x_std);
+    output.extend_from_slice(&y_std);
     assert_eq!(output.len(), Q_SIZE);
     output
+}
+
+/// Field inversion in the Montgomery domain via Fermat's little theorem.
+/// Input: `a_m = a·R mod p`; output: `a^{-1}·R mod p`.
+fn fq_inverse_montgomery(bld: &mut CircuitAdapter, a_m: &[usize]) -> Vec<usize> {
+    let pm2 = {
+        let mut m = ark_bn254::Fq::MODULUS;
+        m.0[0] = m.0[0].wrapping_sub(2); // p is odd so p.0[0] >= 3; no borrow propagates
+        m
+    };
+    let mut acc: Vec<usize> = a_m.to_vec();
+    let mut started = false;
+    for limb_idx in (0..4).rev() {
+        let limb = pm2.0[limb_idx];
+        for bit_idx in (0..64).rev() {
+            let bit = (limb >> bit_idx) & 1 != 0;
+            if !started {
+                if bit { started = true; }
+                continue;
+            }
+            acc = Fq::square_montgomery(bld, &acc);
+            if bit {
+                acc = Fq::mul_montgomery(bld, &acc, a_m);
+            }
+        }
+    }
+    acc
 }
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
@@ -312,10 +346,9 @@ mod tests {
             .map(|&i| circuit.0[i].borrow().get_value())
             .collect();
 
-        let x = Fq::from_montgomery(Fq::from_bits(bits[..N].to_vec()));
-        let y = Fq::from_montgomery(Fq::from_bits(bits[N..2 * N].to_vec()));
-        let z = Fq::from_montgomery(Fq::from_bits(bits[2 * N..].to_vec()));
-        ark_bn254::G1Projective::new(x, y, z).into_affine()
+        let x = Fq::from_bits(bits[..N].to_vec());
+        let y = Fq::from_bits(bits[N..2 * N].to_vec());
+        ark_bn254::G1Affine::new_unchecked(x, y)
     }
 
     #[test]
