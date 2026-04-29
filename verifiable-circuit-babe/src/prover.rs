@@ -17,7 +17,7 @@ use crate::instance::set_gc_const_labels;
 use crate::soldering::{SolderedLabelsData, SolderingData};
 use crate::utils::{derive_hashlock, h_160, h_256, ro_from_pairing_bytes};
 
-pub const GROTH_16_SEED: usize = 42;
+pub const GROTH_16_SEED: u64 = 42;
 
 pub struct BABEProver {
     groth16_proof: Groth16Proof<Bn254>,
@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn test_prover_ct_prove_decrypts_message() {
         reset_gid();
-        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(42);
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(GROTH_16_SEED);
 
         // 1. Groth16 setup and prove: a * b = c.
         let a = Fr::from(3u64);
@@ -454,7 +454,7 @@ mod tests {
         Vec<FinalizedInstanceData>,
         SolderingData,
     ) {
-        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(42);
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(GROTH_16_SEED);
         let a = Fr::from(3u64);
         let b = Fr::from(7u64);
         let (_, vk) = ark_groth16::Groth16::<Bn254>::setup(
@@ -496,7 +496,7 @@ mod tests {
             setup_cac_soldering();
 
         // Prove with the same dummy circuit.
-        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(42);
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(GROTH_16_SEED);
         let a = Fr::from(3u64);
         let b = Fr::from(7u64);
         let (pk, _) = ark_groth16::Groth16::<Bn254>::setup(

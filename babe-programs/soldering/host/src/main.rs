@@ -1,12 +1,14 @@
 use std::time::Instant;
 
 use ark_bn254::{Bn254, Fr};
-use ark_crypto_primitives::snark::CircuitSpecificSetupSNARK;
+use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
 use ark_groth16::Groth16;
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use tracing::info;
+use rand::SeedableRng;
 use zkm_sdk::{include_elf, utils as sdk_utils, ProverClient, ZKMStdin};
-use verifiable_circuit_babe::prover::BABEProver;
+use verifiable_circuit_babe::babe::DummyMulCircuit;
+use verifiable_circuit_babe::prover::{BABEProver, GROTH_16_SEED};
 use verifiable_circuit_babe::soldering::{
     build_soldered_wires_input, SolderedLabelsData, SolderedWiresInput,
 };
@@ -16,36 +18,31 @@ const ELF: &[u8] = include_elf!("soldering-guest");
 
 const N_CC: usize = 4; // Number of C&C instances.
 
-#[derive(Clone)]
-struct TrivialCircuit;
-
-impl ConstraintSynthesizer<Fr> for TrivialCircuit {
-    fn generate_constraints(self, cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
-        cs.new_input_variable(|| Ok(Fr::from(1u64)))?;
-        Ok(())
-    }
-}
-
-fn setup_vk() -> (ark_groth16::VerifyingKey<Bn254>, Vec<Fr>) {
-    let mut rng = rand::thread_rng();
-    let (_, vk) =
-        Groth16::<Bn254>::setup(TrivialCircuit, &mut rng).unwrap();
-    (vk, vec![Fr::from(1u64)])
-}
 
 fn main() {
     sdk_utils::setup_logger();
 
-    //  1. Setup VK and create N_CC instances 
-    let start = Instant::now();
-    let (vk, public_inputs) = setup_vk();
-    info!(elapsed = ?start.elapsed(), "VK setup done");
+    // Prove with the same dummy circuit.
+    let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(GROTH_16_SEED);
+    let a = Fr::from(3u64);
+    let b = Fr::from(7u64);
+    let (pk, vk) = ark_groth16::Groth16::<Bn254>::setup(
+        DummyMulCircuit::<Fr> { a: Some(a), b: Some(b) }, &mut rng,
+    ).unwrap();
+    let proof = ark_groth16::Groth16::<Bn254>::prove(
+        &pk,
+        DummyMulCircuit::<Fr> { a: Some(a), b: Some(b) },
+        &mut rng,
+    ).unwrap();
+    let static_public_inputs = a * b;
+    let dynamic_public_inputs = a * a;
 
+    //  1. Create N_CC instances
     let start = Instant::now();
-    let verifier = BABEVerifier::new(N_CC, &vk, &public_inputs).expect("verifier setup failed");
+    let verifier = BABEVerifier::new(N_CC, &vk, static_public_inputs).expect("verifier setup failed");
     info!(elapsed = ?start.elapsed(), n_cc = N_CC, "BABEVerifier created");
 
-    //  2. C&C commit and derive finalized indices 
+    //  2. C&C commit and derive finalized indices
     let package = verifier.commit();
     let finalized_indices = vec![0, 1, 2, 3];
 
@@ -54,7 +51,7 @@ fn main() {
     let soldering_input = build_soldered_wires_input(&verifier, &finalized_indices);
     info!(elapsed = ?start.elapsed(), "SolderedWiresInput built");
 
-    //  4. Feed input to zkVM guest 
+    //  4. Feed input to zkVM guest
     let mut stdin = ZKMStdin::new();
     stdin.write::<SolderedWiresInput>(&soldering_input);
 
@@ -75,7 +72,7 @@ fn main() {
         .expect("soldering output verification failed");
     info!("commitment verification passed");
 
-    //  6. Generate ZK proof 
+    //  6. Generate ZK proof
     let start = Instant::now();
     let (pk, vk_proof) = client.setup(ELF);
     let proof = client.prove(&pk, stdin).compressed().run().unwrap();

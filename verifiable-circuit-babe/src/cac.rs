@@ -181,14 +181,15 @@ mod tests {
     use ark_crypto_primitives::snark::CircuitSpecificSetupSNARK;
     use rand::SeedableRng;
     use crate::babe::DummyMulCircuit;
+    use crate::prover::GROTH_16_SEED;
     use crate::verifier::BABEVerifier;
 
-    const TEST_N_CC: usize = 4;
-    const TEST_M_CC: usize = 2;
+    const TEST_N_CC: usize = 181;
+    const TEST_M_CC: usize = 4;
 
     #[test]
     fn test_cac_commit_open_verify() {
-        let mut rng = ChaCha12Rng::seed_from_u64(42);
+        let mut rng = ChaCha12Rng::seed_from_u64(GROTH_16_SEED);
 
         let a = Fr::from(3u64);
         let b = Fr::from(7u64);

@@ -19,7 +19,7 @@ use crate::cac::{
     CACSetupPackage, FinalizedInstanceData,
 };
 use crate::lamport::{lamport_keygen, lamport_sign, lamport_verify, LamportPk, LamportSk};
-use crate::prover::BABEProver;
+use crate::prover::{BABEProver, GROTH_16_SEED};
 use crate::soldering::{build_soldered_wires_input, soldering_guest_compute, SolderingData, SolderingProof};
 use crate::transactions::{OnchainSize, TxAssertWitness, TxChallengeAssertOutputLock, TxChallengeAssertWitness, TxDepositLock, TxNoWithdrawWitness, TxWithdrawWitness, TxWronglyChallengedWitness};
 pub use crate::utils::{derive_hashlock, g1_from_ser_checked, g1_to_ser, g2_from_ser_checked, g2_to_ser, groth16_vk_x, h_256, ro_from_pairing_bytes};
@@ -425,8 +425,9 @@ pub fn we_known_pi1_dec(
 }
 
 // ─── BABE C&C Soldering E2E flow ─────────────────────────────────────────────────────
+// Todo: fix errors.
 pub fn run_babe_e2e_cac() -> BabeCACE2ERun {
-    let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(42);
+    let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(GROTH_16_SEED);
     let a = Fr::from(7u64);
     let b = Fr::from(9u64);
 
@@ -613,7 +614,7 @@ mod tests {
 
     #[test]
     fn we_encsetup_dec_roundtrip() {
-        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(42);
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(GROTH_16_SEED);
         let a = Fr::from(3u64);
         let b = Fr::from(7u64);
         let (pk, vk) = ark_groth16::Groth16::<Bn254>::setup(

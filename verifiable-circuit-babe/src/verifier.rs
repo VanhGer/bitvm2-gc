@@ -22,23 +22,29 @@ impl BABEVerifier {
         static_public_inputs: Fr,
     ) -> Result<Self, String> {
         use p3_maybe_rayon::prelude::*;
+
         let seeds: Vec<u64> = (0..n_cc).map(|_| rand::random()).collect();
-        let instances = seeds
-            .par_iter()
-            .map(|&seed| {
-                let inst = CACInstance::new_from_seed(
-                    seed,
-                    vk,
-                    static_public_inputs,
-                )?;
-                Ok::<CACInstance, String>(inst)
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()?;
+
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(8)
+            .build()
+            .map_err(|e| e.to_string())?;
+
+        let instances = pool.install(|| {
+            seeds
+                .par_iter()
+                .map(|&seed| {
+                    CACInstance::new_from_seed(seed, vk, static_public_inputs)
+                })
+                .collect::<Vec<Result<_, _>>>()
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()
+        })?;
+
         let rng = &mut rand::thread_rng();
         let mut temp_val = [0u8; 32];
         rng.fill(&mut temp_val);
+
         Ok(Self { instances, temp_val })
     }
 
