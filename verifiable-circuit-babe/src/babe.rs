@@ -315,6 +315,8 @@ pub fn babe_prover_wrongly_challenged_cac(
     let found = prover.check_compute_msg(
         &prover_state.finalized,
         &base_input_labels,
+        // Todo: fix this with pi1 and x_d
+        &base_input_labels,
         &prover_state.soldering,
         &prover_state.h_msgs,
     );

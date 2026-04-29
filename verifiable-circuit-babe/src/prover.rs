@@ -11,10 +11,13 @@ use garbled_snark_verifier::dv_bn254::fr::Fr as DvFr;
 use crate::babe::{WeKnownPi1ProveCt, WeKnownPi1SetupCt};
 use crate::cac::{CACSetupPackage, FinalizedInstanceData};
 use crate::dre::matrices::u_bar_vec;
+use crate::dre::N;
 use crate::gc::{SparseAdaptorTable, SGC_PART1_CONSTANT_SIZE};
 use crate::instance::set_gc_const_labels;
 use crate::soldering::{SolderedLabelsData, SolderingData};
 use crate::utils::{derive_hashlock, h_160, h_256, ro_from_pairing_bytes};
+
+pub const GROTH_16_SEED: usize = 42;
 
 pub struct BABEProver {
     groth16_proof: Groth16Proof<Bn254>,
@@ -89,19 +92,18 @@ impl BABEProver {
     pub fn check_compute_msg(
         &mut self,
         finalized: &[FinalizedInstanceData],
-        base_input_labels: &[S],
+        pi1_labels: &[S],
+        x_d_labels: &[S],
         soldering: &SolderingData,
         h_msgs_onchain: &[[u8; 20]],
     ) -> bool {
         let sld = &soldering.soldering_proof.soldered_output;
 
         println!("Trying base instance...");
-        // todo: fix this, this is hard-coded as fgc labels and havent split to pi1 and xd labels
-        let base_full = Self::build_full_labels(&finalized[0].constant_labels_0, base_input_labels);
         let base_res = self.try_evaluate_instance(
             &finalized[0],
-            &base_full,
-            &base_full,
+            &pi1_labels,
+            &x_d_labels,
             h_msgs_onchain[0]
         );
         match base_res {
@@ -114,25 +116,38 @@ impl BABEProver {
         println!("Trying non-base instance...");
         for i in 1..finalized.len() {
             let deltas_i = &sld.deltas[i - 1];
-            let instance_labels: Vec<S> = base_input_labels
+
+            let instance_pi1_labels: Vec<S> = pi1_labels
                 .iter()
                 .enumerate()
-                .map(|(j, &base_lbl)| {
+                .map(|(j, &lbl)| {
                     let (d0, d1) = deltas_i[j];
-                    if h_256(&base_lbl.0) == sld.base_commitment[j].0 {
-                        base_lbl ^ S(d0)
+                    if h_256(&lbl.0) == sld.base_commitment[j].0 {
+                        lbl ^ S(d0)
                     } else {
-                        base_lbl ^ S(d1)
+                        lbl ^ S(d1)
                     }
                 })
                 .collect();
 
-            // todo: add sgc labels
-            let full = Self::build_full_labels(&finalized[i].constant_labels_0, &instance_labels);
+            let instance_x_d_labels: Vec<S> = x_d_labels
+                .iter()
+                .enumerate()
+                .map(|(j, &lbl)| {
+                    let idx = 2 * N + j;
+                    let (d0, d1) = deltas_i[idx];
+                    if h_256(&lbl.0) == sld.base_commitment[idx].0 {
+                        lbl ^ S(d0)
+                    } else {
+                        lbl ^ S(d1)
+                    }
+                })
+                .collect();
+
             let temp = self.try_evaluate_instance(
                 &finalized[i],
-                &full,
-                &full, //todo: fix this to pi1 and x_d
+                &instance_pi1_labels,
+                &instance_x_d_labels,
                 h_msgs_onchain[i]
             );
             match temp {
@@ -145,14 +160,6 @@ impl BABEProver {
         false
     }
 
-    fn build_full_labels(constant_labels: &[S; 2], input_labels: &[S]) -> Vec<S> {
-        let mut v = Vec::with_capacity(2 + input_labels.len());
-        v.push(constant_labels[0]);
-        v.push(constant_labels[1]);
-        v.extend_from_slice(input_labels);
-        v
-    }
-
     /// Evaluate the garbled circuit for one instance, decrypt the message, and check it
     /// against `h_msg_onchain`. On success, stores the result fields and returns `Ok(true)`.
     fn try_evaluate_instance(
@@ -162,7 +169,6 @@ impl BABEProver {
         x_d_labels: &[S],
         h_msg_onchain: [u8; 20],
     ) -> Result<bool, String> {
-        // Todo: add sgc
         let (mut fgc, fgc_indices, mut sgc, sgc_indices) = crate::gc::read_fresh_gc();
         let ct_prove = self.compute_ct_prove(
             &mut fgc,
@@ -178,6 +184,7 @@ impl BABEProver {
         );
         drop(fgc);
         drop(sgc);
+        println!("compute ct_prove done");
 
         let msg = Self::compute_msg(&self.groth16_proof, &ct_prove, &data.ct_setup, &self.pk.vk)?;
         // found the valid one.
@@ -368,6 +375,7 @@ mod tests {
     use garbled_snark_verifier::core::utils::reset_gid;
     use crate::babe::DummyMulCircuit;
     use crate::cac::cac_finalize_indices;
+    use crate::dre::N;
     use crate::instance::CACInstance;
     use crate::soldering::{build_soldered_wires_input, soldering_guest_compute, SolderingProof};
     use crate::verifier::BABEVerifier;
@@ -392,6 +400,7 @@ mod tests {
             DummyMulCircuit::<Fr> { a: Some(a), b: Some(b) },
             &mut rng,
         ).unwrap();
+        let l2 = vk.gamma_abc_g1[2];
         let static_public_inputs = a * b;
         let dynamic_public_inputs = a * a; // x_d
 
@@ -445,7 +454,7 @@ mod tests {
         Vec<FinalizedInstanceData>,
         SolderingData,
     ) {
-        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(42);
         let a = Fr::from(3u64);
         let b = Fr::from(7u64);
         let (_, vk) = ark_groth16::Groth16::<Bn254>::setup(
@@ -487,7 +496,7 @@ mod tests {
             setup_cac_soldering();
 
         // Prove with the same dummy circuit.
-        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(42);
         let a = Fr::from(3u64);
         let b = Fr::from(7u64);
         let (pk, _) = ark_groth16::Groth16::<Bn254>::setup(
@@ -504,17 +513,15 @@ mod tests {
 
         // base_input_labels: active labels for the 508 π₁ input wires of the base instance.
         let base_idx = finalized_indices[0];
-        // Todo: add dynamic input
-        let all_labels = verifier.instances[base_idx].compute_pi1_labels_based_on_value(proof.a);
-        let base_input_labels = &all_labels[2..]; // strip constant-wire labels
-
+        let pi1_labels = verifier.instances[base_idx].compute_pi1_labels_based_on_value(proof.a);
+        let x_d_labels = verifier.instances[base_idx].compute_x_d_labels_based_on_value(dynamic_public_inputs);
         let mut prover = BABEProver::new(pk.clone(), proof.clone(), dynamic_public_inputs);
 
         // Extract h_msgs from bitcoin script of WronglyChallenged Txn
         // But in this test, we just get from package
         let mut h_msgs_onchain: Vec<[u8; 20]> = finalized_indices.iter().map(|&idx| package.commits[idx].h_msg).collect();
         let found = prover.check_compute_msg(
-            &finalized, base_input_labels, &soldering, &h_msgs_onchain,
+            &finalized, &pi1_labels, &x_d_labels, &soldering, &h_msgs_onchain,
         );
 
         assert!(found, "expected a valid msg to be found");
@@ -523,10 +530,11 @@ mod tests {
         assert!(prover.valid_finalized_id.is_some());
 
         // change the base msg to access non-base instance
+        println!("change the base msg to access non-base instance");
         let mut prover = BABEProver::new(pk, proof, dynamic_public_inputs);
         h_msgs_onchain[0] = [0u8; 20];
         let found = prover.check_compute_msg(
-            &finalized, base_input_labels, &soldering, &h_msgs_onchain,
+            &finalized, &pi1_labels, &x_d_labels, &soldering, &h_msgs_onchain,
         );
         assert!(found, "expected a valid msg to be found");
         assert!(prover.valid_msg.is_some());
