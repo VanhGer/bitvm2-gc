@@ -19,11 +19,12 @@ pub struct CACSetupPackage {
 }
 
 /// Derive the finalized instance indices deterministically from the committed values.
+/// Note that in practice, prover doesnt need to use this. Instead, he can generate indices
+/// using random.
 pub fn cac_finalize_indices(package: &CACSetupPackage, m_cc: usize) -> Vec<usize> {
     let n_cc = package.commits.len();
     assert!(m_cc <= n_cc, "m_cc ({m_cc}) must be <= n_cc ({n_cc})");
 
-    // Todo: make it linter
     let mut hasher = Sha256::new();
     for commit in &package.commits {
         for wire_pair in &commit.epk {
@@ -38,6 +39,7 @@ pub fn cac_finalize_indices(package: &CACSetupPackage, m_cc: usize) -> Vec<usize
             hasher.update(wire_pair[0]);
             hasher.update(wire_pair[1]);
         }
+        hasher.update(commit.b_blind_commit);
         hasher.update(commit.h_msg);
         hasher.update(commit.h_ct_setup);
         hasher.update(commit.com_adaptor[0]);
@@ -100,6 +102,9 @@ pub fn verify_opened_instances(
                 || recomputed.constant_commits_1 != committed.constant_commits_1 {
                 return Err(format!("instance {idx}: constant_commits mismatch"));
             }
+            if recomputed.b_blind_commit != committed.b_blind_commit {
+                return Err(format!("instance {idx}: b_bind_commit mismatch"));
+            }
             if recomputed.h_msg != committed.h_msg {
                 return Err(format!("instance {idx}: h_msg mismatch"));
             }
@@ -127,7 +132,6 @@ pub fn verify_finalized_instances(
     for data in finalized {
         let idx = data.index;
         let committed = &package.commits[idx];
-
 
         for i in 0..3 {
             if gc_ciphertexts_commit(&data.ciphertext_sets[i]) != committed.com_gc[i] {

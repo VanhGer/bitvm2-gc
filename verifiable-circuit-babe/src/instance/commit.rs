@@ -1,3 +1,4 @@
+use ark_serialize::CanonicalSerialize;
 use crate::gc::gc_ciphertexts_commit;
 use crate::instance::CACInstance;
 use crate::utils::{derive_hashlock, h_256};
@@ -12,6 +13,8 @@ pub struct CACInstanceCommit {
     pub constant_commits_0: [[[u8; 32]; 2]; 2],
     /// constant commit for sgc, size = 2 + 2*N
     pub constant_commits_1: [[[u8; 32]; 2]; 510],
+    /// commitment of b_blind in this instance.
+    pub b_blind_commit: [u8; 32],
     pub h_msg: [u8; 20],
     /// RO(ct_setup) = SHA256(ct2_r_delta_g2 || ct3_masked_msg).
     pub h_ct_setup: [u8; 32],
@@ -51,10 +54,16 @@ impl CACInstanceCommit {
         ct_setup_bytes.extend_from_slice(&instance.ct_setup.ct2_r_delta_g2);
         ct_setup_bytes.extend_from_slice(&instance.ct_setup.ct3_masked_msg);
 
+        let mut b_blind_bytes = Vec::new();
+        instance.secrets.b.serialize_compressed(&mut b_blind_bytes).expect("serialize r·G1P");
+
+        let b_blind_commit = h_256(&b_blind_bytes);
+
         CACInstanceCommit {
             epk: input_commits,
             constant_commits_0,
             constant_commits_1,
+            b_blind_commit,
             h_msg: derive_hashlock(&instance.secrets.msg),
             h_ct_setup: h_256(&ct_setup_bytes),
             com_adaptor: [instance.adaptor_tables[0].commit(), instance.adaptor_tables[1].commit()],

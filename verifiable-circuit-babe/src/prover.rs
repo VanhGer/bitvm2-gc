@@ -416,30 +416,24 @@ mod tests {
         );
         let (mut fgc, fgc_indices, mut sgc, sgc_indices) = crate::gc::read_fresh_gc();
 
-        // test inner compute_ct_prove
+        let ct_prove = prover.compute_ct_prove(
+            &mut fgc,
+            &fgc_indices,
+            &mut sgc,
+            &sgc_indices,
+            &constant_labels,
+            &pi1_labels,
+            &x_d_labels,
+            &verifier.ciphertexts_sets,
+            &verifier.adaptor_tables,
+            &verifier.secrets.b,
+        );
+        drop(fgc);
+        drop(sgc);
 
-
-
-
-
-        // let ct_prove = prover.compute_ct_prove(
-        //     &mut fgc,
-        //     &fgc_indices,
-        //     &mut sgc,
-        //     &sgc_indices,
-        //     &constant_labels,
-        //     &pi1_labels,
-        //     &x_d_labels,
-        //     &verifier.ciphertexts_sets,
-        //     &verifier.adaptor_tables,
-        //     &verifier.secrets.b,
-        // );
-        // drop(fgc);
-        // drop(sgc);
-        //
-        // // 5. Decrypt and verify.
-        // let msg = BABEProver::compute_msg(&proof, &ct_prove, &verifier.ct_setup, &vk).unwrap();
-        // assert_eq!(msg, verifier.secrets.msg);
+        // 5. Decrypt and verify.
+        let msg = BABEProver::compute_msg(&proof, &ct_prove, &verifier.ct_setup, &vk).unwrap();
+        assert_eq!(msg, verifier.secrets.msg);
     }
 
     /// Build the common C&C + soldering scaffolding used by both tests below.
@@ -463,7 +457,7 @@ mod tests {
         let verifier = BABEVerifier::new(TEST_N_CC, &vk, static_public_inputs).unwrap();
         let package = verifier.commit();
         let finalized_indices = cac_finalize_indices(&package, TEST_M_CC);
-        let (_, finalized) = verifier.open(&finalized_indices);
+        let (temp, finalized) = verifier.open(&finalized_indices);
 
         let soldered_input = build_soldered_wires_input(&verifier, &finalized_indices);
         let soldered_output = soldering_guest_compute(&soldered_input);
