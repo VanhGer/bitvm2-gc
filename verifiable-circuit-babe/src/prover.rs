@@ -375,7 +375,6 @@ mod tests {
     use garbled_snark_verifier::core::utils::reset_gid;
     use crate::babe::DummyMulCircuit;
     use crate::cac::cac_finalize_indices;
-    use crate::dre::N;
     use crate::instance::CACInstance;
     use crate::soldering::{build_soldered_wires_input, soldering_guest_compute, SolderingProof};
     use crate::verifier::BABEVerifier;
@@ -400,7 +399,6 @@ mod tests {
             DummyMulCircuit::<Fr> { a: Some(a), b: Some(b) },
             &mut rng,
         ).unwrap();
-        let l2 = vk.gamma_abc_g1[2];
         let static_public_inputs = a * b;
         let dynamic_public_inputs = a * a; // x_d
 
@@ -461,12 +459,12 @@ mod tests {
             DummyMulCircuit::<Fr> { a: Some(a), b: Some(b) }, &mut rng,
         ).unwrap();
         let static_public_inputs = a * b;
-        let dynamic_public_inputs = a * a;
+        let _dynamic_public_inputs = a * a;
 
         let verifier = BABEVerifier::new(TEST_N_CC, &vk, static_public_inputs).unwrap();
         let package = verifier.commit();
         let finalized_indices = cac_finalize_indices(&package, TEST_M_CC);
-        let (temp, finalized) = verifier.open(&finalized_indices);
+        let (_temp, finalized) = verifier.open(&finalized_indices);
 
         let soldered_input = build_soldered_wires_input(&verifier, &finalized_indices);
         let soldered_output = soldering_guest_compute(&soldered_input);
@@ -507,7 +505,7 @@ mod tests {
             DummyMulCircuit::<Fr> { a: Some(a), b: Some(b) },
             &mut rng,
         ).unwrap();
-        let static_public_inputs = a * b;
+        let _static_public_inputs = a * b;
         let dynamic_public_inputs = a * a;
 
 

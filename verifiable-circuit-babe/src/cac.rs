@@ -196,7 +196,7 @@ mod tests {
             DummyMulCircuit::<Fr> { a: Some(a), b: Some(b) }, &mut rng,
         ).expect("groth16 setup");
         let static_public_inputs = a * b;
-        let dynamic_public_inputs = a * a;
+        let _dynamic_public_inputs = a * a;
 
         // Verifier creates TEST_N_CC instances and commits.
         let now = std::time::Instant::now();

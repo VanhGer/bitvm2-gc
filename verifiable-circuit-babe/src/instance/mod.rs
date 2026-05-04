@@ -323,7 +323,6 @@ mod tests {
     #[test]
     fn enc_setup_prove_dec_roundtrip() {
         use crate::babe::{we_known_pi1_dec, WeKnownPi1ProveCt};
-        use crate::utils::g1_to_ser;
 
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(GROTH_16_SEED);
 

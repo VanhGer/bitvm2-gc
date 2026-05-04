@@ -151,7 +151,8 @@ mod tests {
         assert_eq!(sgc.0.len(), s_circuit.0.len(), "reconstructed wire count mismatch");
         assert_eq!(fgc.1.len(), f_circuit.1.len(), "reconstructed gate count mismatch");
         assert_eq!(sgc.1.len(), s_circuit.1.len(), "reconstructed gate count mismatch");
-
+        assert_eq!(fgc_indices, fgc_output_indices, "reconstructed output wire mismatch");
+        assert_eq!(sgc_indices, sgc_output_indices, "reconstructed output wire mismatch");
         for (i, (orig, rec)) in f_circuit.1.iter().zip(fgc.1.iter()).enumerate() {
             assert_eq!(orig.gate_type, rec.gate_type, "reconstructed gate[{i}] type mismatch");
             assert_eq!(orig.wire_a.borrow().id, rec.wire_a.borrow().id, "reconstructed gate[{i}] wire_a id mismatch");
