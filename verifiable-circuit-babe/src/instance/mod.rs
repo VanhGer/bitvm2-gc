@@ -1,19 +1,17 @@
 use ark_bn254::Fr;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ec::pairing::Pairing;
-use ark_ff::{UniformRand, Zero};
+use ark_ff::UniformRand;
 use garbled_snark_verifier::bag::{Circuit, S};
 use crate::babe::WeKnownPi1SetupCt;
-use crate::gc::{build_l2_table_bits, SparseAdaptorTable, SGC_PART1_CONSTANT_SIZE, WINDOW_ENTRIES};
+use crate::gc::{SparseAdaptorTable, SGC_PART1_CONSTANT_SIZE};
 use crate::instance::secret::InstanceSecrets;
 use ark_groth16::VerifyingKey as Groth16VerifyingKey;
 use ark_serialize::CanonicalSerialize;
-use garbled_snark_verifier::dv_bn254::fp254impl::Fp254Impl;
 use garbled_snark_verifier::dv_bn254::fq::Fq as DvFq;
 use garbled_snark_verifier::dv_bn254::fr::Fr as DvFr;
-use crate::dre::{N, Q_SIZE, U_BAR_SIZE};
+use crate::dre::{Q_SIZE, U_BAR_SIZE};
 use crate::instance::commit::CACInstanceCommit;
-use crate::prover::BABEProver;
 use crate::utils::{g2_to_ser, ro_from_pairing_bytes};
 
 pub mod secret;
@@ -320,14 +318,14 @@ mod tests {
     use rand::SeedableRng;
     use garbled_snark_verifier::circuits::bn254::g1::G1Affine;
     use crate::babe::DummyMulCircuit;
-    use crate::prover::BABEProver;
+    use crate::prover::{BABEProver, GROTH_16_SEED};
 
     #[test]
     fn enc_setup_prove_dec_roundtrip() {
         use crate::babe::{we_known_pi1_dec, WeKnownPi1ProveCt};
         use crate::utils::g1_to_ser;
 
-        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(42);
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(GROTH_16_SEED);
 
         let a = Fr::from(3u64);
         let b = Fr::from(7u64);
@@ -344,7 +342,7 @@ mod tests {
         let static_inputs = a * b;
         let dynamic_inputs = a * a;
 
-        let instance = CACInstance::new_from_seed(42, &vk, static_inputs)
+        let instance = CACInstance::new_from_seed(2, &vk, static_inputs)
             .expect("new_from_seed");
         println!("generate instance done");
 

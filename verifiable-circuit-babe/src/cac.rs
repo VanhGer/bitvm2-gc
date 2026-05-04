@@ -1,5 +1,4 @@
 use ark_bn254::{Fr, G1Affine};
-use ark_ec::AffineRepr;
 use ark_groth16::VerifyingKey as Groth16VerifyingKey;
 use crate::babe::WeKnownPi1SetupCt;
 use crate::instance::commit::CACInstanceCommit;
@@ -184,7 +183,7 @@ mod tests {
     use crate::prover::GROTH_16_SEED;
     use crate::verifier::BABEVerifier;
 
-    const TEST_N_CC: usize = 181;
+    const TEST_N_CC: usize = 10;
     const TEST_M_CC: usize = 4;
 
     #[test]

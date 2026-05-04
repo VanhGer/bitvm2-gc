@@ -149,7 +149,7 @@ fn emit_scalar_mul_then_add(
         y: Fq(y_m),
         z: Fq(z_m),
     };
-    let (mont_res_affine, is_valid) = projective_to_affine_montgomery(bld, &mont_res_proj);
+    let (mont_res_affine, _is_valid) = projective_to_affine_montgomery(bld, &mont_res_proj);
     // convert back to standard form
     let x_q = Fq::mul_by_constant_montgomery(bld, &mont_res_affine.x.0, ark_bn254::Fq::from(1u64));
     let y_q = Fq::mul_by_constant_montgomery(bld, &mont_res_affine.y.0, ark_bn254::Fq::from(1u64));
@@ -159,33 +159,6 @@ fn emit_scalar_mul_then_add(
     output.extend_from_slice(&y_q);
     assert_eq!(output.len(), Q_SIZE);
     output
-}
-
-/// Field inversion in the Montgomery domain via Fermat's little theorem.
-/// Input: `a_m = a·R mod p`; output: `a^{-1}·R mod p`.
-fn fq_inverse_montgomery(bld: &mut CircuitAdapter, a_m: &[usize]) -> Vec<usize> {
-    let pm2 = {
-        let mut m = ark_bn254::Fq::MODULUS;
-        m.0[0] = m.0[0].wrapping_sub(2); // p is odd so p.0[0] >= 3; no borrow propagates
-        m
-    };
-    let mut acc: Vec<usize> = a_m.to_vec();
-    let mut started = false;
-    for limb_idx in (0..4).rev() {
-        let limb = pm2.0[limb_idx];
-        for bit_idx in (0..64).rev() {
-            let bit = (limb >> bit_idx) & 1 != 0;
-            if !started {
-                if bit { started = true; }
-                continue;
-            }
-            acc = Fq::square_montgomery(bld, &acc);
-            if bit {
-                acc = Fq::mul_montgomery(bld, &acc, a_m);
-            }
-        }
-    }
-    acc
 }
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
