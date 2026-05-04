@@ -173,7 +173,7 @@ impl CACInstance {
         })
     }
 
-    /// Enc*(crs, x_S, |D|, msg; r, r·B):
+    /// Enc*(crs, x_S, |D|, msg; r, B):
     ///   P_S = gamma_abc[0] + Σ_{k} x_S[k]·gamma_abc[k+1]
     ///   mask = Y_S^r - e(r·B, γ) where Y_S^r = e(α, r·β) + e(P_S, r·γ)
     fn enc_setup(

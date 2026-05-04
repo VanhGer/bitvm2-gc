@@ -1,7 +1,7 @@
 // ─── Transaction locking script ───────────────────────────────────────────────
 
 use serde::{Deserialize, Serialize};
-use crate::babe::{BabeBtcSig, BtcPk, BTC_SIG_BYTES, LAMPORT_N, LAMPORT_SIG_BYTES, MSG_BYTES, PI1_BYTES};
+use crate::babe::{BabeBtcSig, BtcPk, BTC_SIG_BYTES, LAMPORT_SIG_BYTES, MSG_BYTES};
 use crate::lamport::LamportSig;
 
 /// Constants embedded in the locking script of tx_Deposit output 0.
@@ -28,7 +28,7 @@ pub struct TxChallengeAssertOutputLock {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TxAssertWitness {
     /// Compressed G1Affine, 33 bytes — the asserted proof element.
-    /// This is not onchain
+    /// In practice, this is not onchain.
     pub pi1: Vec<u8>,
     /// Dynamic public input scalar x_d, 32 bytes (little-endian Fr).
     /// This is not onchain
@@ -45,9 +45,10 @@ pub struct TxAssertWitness {
 ///   (b) SHA256(L[i]) == lpk_V[i][bit_i]     — L[i] is the correct GC label for bit_i under epk
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TxChallengeAssertWitness {
-    /// L₁…L_M — one GC input label per π₁ bit, LAMPORT_N × 16 bytes.
+    /// L₁…L_M — one GC input label per π₁ bit and x_d bit, LAMPORT_N × 16 bytes.
     pub input_labels: Vec<[u8; 16]>,
-    /// μ₁…μ_M — Lamport sig re-posted to bind L to π₁.
+    /// μ₁…μ_M — Lamport sig re-posted to bind L to π₁ and x_d. This lamport_sig is submitted
+    /// from Prover before in TxAssertWitness.
     pub lamport_sig: LamportSig,
     /// VerifierLiveSig
     pub sig_v: BabeBtcSig,
@@ -108,11 +109,9 @@ impl OnchainSize for TxAssertWitness {
 
 impl OnchainSize for TxChallengeAssertWitness {
     fn size_bytes(&self) -> usize {
-        LAMPORT_N * 16
-            + LAMPORT_SIG_BYTES
+        LAMPORT_SIG_BYTES * 2
             + BTC_SIG_BYTES     // sig_v:           32 bytes
             + BTC_SIG_BYTES     // sig_p:           32 bytes
-        // total: 16,320 bytes
     }
 }
 
@@ -120,7 +119,6 @@ impl OnchainSize for TxWronglyChallengedWitness {
     fn size_bytes(&self) -> usize {
         BTC_SIG_BYTES // sig_p: 32 bytes
             + MSG_BYTES   // msg:   32 bytes
-        // total: 64 bytes
     }
 }
 
@@ -134,53 +132,4 @@ impl OnchainSize for TxWithdrawWitness {
     fn size_bytes(&self) -> usize {
         BTC_SIG_BYTES * 4 // 4 sigs × 32 bytes = 128 bytes
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::babe::{BabeBtcSig, LAMPORT_N, LAMPORT_SIG_BYTES, PI1_BYTES};
-    use crate::transactions::{TxAssertWitness, TxChallengeAssertWitness, TxWronglyChallengedWitness};
-
-    // #[test]
-    // fn onchain_sizes() {
-    //     assert_eq!(LAMPORT_SIG_BYTES, 508 * 16);
-    //
-    //     // Construct minimal witnesses to call size_bytes().
-    //     let dummy_sig = BabeBtcSig::ProverLiveSig;
-    //     let dummy_lamport = LamportSig(vec![[0u8; 16]; LAMPORT_N]);
-    //
-    //     let assert_w = TxAssertWitness {
-    //         pi1: vec![0u8; PI1_BYTES],
-    //         x_d: vec![0u8; 32],
-    //         lamport_sig: dummy_lamport.clone(),
-    //     };
-    //     assert_eq!(assert_w.size_bytes(), 8161);
-    //
-    //     let challenge_w = TxChallengeAssertWitness {
-    //         input_labels: vec![[0u8; 16]; LAMPORT_N],
-    //         lamport_sig: dummy_lamport,
-    //         sig_v: dummy_sig.clone(),
-    //         sig_p: dummy_sig.clone(),
-    //     };
-    //     assert_eq!(challenge_w.size_bytes(), 16320);
-    //
-    //     let wc_w = TxWronglyChallengedWitness { sig_p: dummy_sig.clone(), msg: [0u8; 32] };
-    //     assert_eq!(wc_w.size_bytes(), 64);
-    //
-    //     let nw_w = TxNoWithdrawWitness {
-    //         input0_sig_p: dummy_sig.clone(),
-    //         input0_sig_v: dummy_sig.clone(),
-    //         input1_sig_v: dummy_sig.clone(),
-    //     };
-    //     assert_eq!(nw_w.size_bytes(), 96);
-    //
-    //     let wd_w = TxWithdrawWitness {
-    //         input0_sig_p: dummy_sig.clone(),
-    //         input0_sig_v: dummy_sig.clone(),
-    //         input1_sig_p: dummy_sig.clone(),
-    //         input1_sig_v: dummy_sig,
-    //     };
-    //     assert_eq!(wd_w.size_bytes(), 128);
-    // }
 }

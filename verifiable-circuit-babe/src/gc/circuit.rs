@@ -1,6 +1,6 @@
 use ark_bn254::G1Affine;
 use ark_ec::CurveGroup;
-use ark_ff::{AdditiveGroup, PrimeField, Zero};
+use ark_ff::{AdditiveGroup, Zero};
 use sha2::{Digest, Sha256};
 use garbled_snark_verifier::circuits::sect233k1::builder::{CircuitAdapter, CircuitTrait};
 use garbled_snark_verifier::dv_bn254::basic::selector;

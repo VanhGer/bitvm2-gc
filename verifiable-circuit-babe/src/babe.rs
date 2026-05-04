@@ -11,7 +11,6 @@ use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
-use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::pairing::Pairing;
 use garbled_snark_verifier::bag::S;
 use crate::cac::{
@@ -27,16 +26,16 @@ use crate::verifier::BABEVerifier;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-/// Number of bits in π₁ (G1Affine): 254 bits for x + 254 bits for y.
-/// Plus 254 Fr
+/// Number of bits in π₁ (G1Affine): 254 bits for x + 254 bits for y + 254 Fr
 pub const LAMPORT_N: usize = 762;
 
 /// Total number of C&C instances the Verifier creates and commits to.
 /// In practice, N_CC = 181.
-pub const N_CC: usize = 10;
+pub const N_CC: usize = 4;
 
 /// Number of instances the Prover finalizes (keeps hidden); rest are opened.
-pub const M_CC: usize = 4;
+/// In practice, M_CC = 4.
+pub const M_CC: usize = 2;
 
 /// Byte size of a Lamport signature on-chain: LAMPORT_N revealed 16-byte secrets.
 pub const LAMPORT_SIG_BYTES: usize = LAMPORT_N * 16;
@@ -58,6 +57,8 @@ pub struct BtcPk(pub [u8; 33]);
 /// Named Bitcoin signature placeholders (64-byte Schnorr in production).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BabeBtcSig {
+    // In practice, this is divided into 2 Txns: ProverPresigChallengeAssert_1
+    // and ProverPresigChallengeAssert_2
     ProverPresigChallengeAssert,
     ProverPresigNoWithdraw,
     VerifierPresigAssert,
@@ -88,6 +89,7 @@ pub fn compute_epk(encoding_keys: &[Vec<S>; 2]) -> EncodingKeyPublic {
 
 #[derive(Debug, Clone)]
 pub struct ProverPresigs {
+    // In practice, this is divided into 2 sigs, for ChallengeAssert1 and CHallengeAssert2
     pub sig_challenge_assert: BabeBtcSig,
     pub sig_no_withdraw: BabeBtcSig,
 }
@@ -115,6 +117,8 @@ pub struct WeKnownPi1ProveCt {
 // ─── Setup state ─────────────────────────────────────────────────────────────
 
 /// Everything the Prover stores after completing the setup phase.
+/// In practice, prover has the commitment of input labels from the Verifier Txn skeletons.
+/// (Verifier just need to commit the base instance input labels)
 pub struct ProverSetupState {
     pub lsk_p: LamportSk,
     pub finalized: Vec<FinalizedInstanceData>,
@@ -137,6 +141,7 @@ pub struct VerifierSetupState {
 pub struct BabeCACE2ERun {
     pub deposit_lock: TxDepositLock,
     pub assert_witness: TxAssertWitness,
+    // In practice, this is divided into 2 Txn witness: challenge_assert1/2
     pub challenge_assert_witness: TxChallengeAssertWitness,
     pub wrongly_challenged_witness: TxWronglyChallengedWitness,
 }
@@ -206,11 +211,17 @@ pub fn babe_verifier_presign() -> VerifierPresigs {
     }
 }
 
+// Prover verifies verifier presigns. In practice, this should check
+// the Txn skeletons. Additional check: hardcoded prover_lpk in the ChallengeAssert_1/2
+// is correct.
 pub fn babe_verify_verifier_presigs(presigs_v: &VerifierPresigs) -> bool {
     presigs_v.sig_assert == BabeBtcSig::VerifierPresigAssert
         && presigs_v.sig_withdraw == BabeBtcSig::VerifierPresigWithdraw
 }
 
+// Verifier verifies prover presigns. In practice, this should check
+// the Txn skeletons. Additional check: hardcoded verifier_lpk in the ChallengeAssert_1/2
+// is correct
 pub fn babe_verify_prover_presigs(
     prover_presigs: &ProverPresigs,
     challenge_assert_outlock: &TxChallengeAssertOutputLock,
@@ -226,6 +237,7 @@ pub fn babe_verify_prover_presigs(
     let keys_valid = challenge_assert_outlock.pk_p == *prover_pkey
         && challenge_assert_outlock.pk_v == *verifier_pkey;
 
+    // check that the h_msg is correct.
     let h_msgs_valid = challenge_assert_outlock.h_msgs.len() == finalized_indices.len()
         && challenge_assert_outlock.h_msgs.iter().zip(finalized_indices.iter()).all(|(&h_msg, &idx)| {
         h_msg == package.commits[idx].h_msg
@@ -240,16 +252,15 @@ pub fn babe_build_deposit_lock(pk_p: BtcPk, pk_v: BtcPk, amount: u64) -> TxDepos
     TxDepositLock { pk_p, pk_v, amount }
 }
 
-// ─── Assert phase (Prover posts π₁) ─────────────────────────────────────────
+// ─── Assert phase (Prover posts π₁ and x_d) ─────────────────────────────────────────
 
-/// Prover: sign π₁ with lsk_P and build the assert witness.
+/// Prover: sign π₁ and x_d with lsk_P and build the assert witness.
 pub fn babe_prover_assert(proof: &Groth16Proof<Bn254>, lsk_p: &LamportSk, x_d: ark_bn254::Fr) -> TxAssertWitness {
     let pi1 = proof.a;
     let mut pi1_bytes = Vec::new();
     pi1.serialize_compressed(&mut pi1_bytes).expect("serialize π₁");
-    // Todo: convert x_d to bytes
     let mut x_d_bytes = Vec::new(); x_d.serialize_compressed(&mut x_d_bytes).expect("serialize x_d");
-    let lamport_sig = lamport_sign(lsk_p, &pi1);
+    let lamport_sig = lamport_sign(lsk_p, &pi1, x_d);
     TxAssertWitness { pi1: pi1_bytes, lamport_sig, x_d: x_d_bytes }
 }
 
@@ -267,7 +278,7 @@ pub fn build_ca_outlock(
     }
 }
 
-/// Verifier: verify Lamport sig in assert_witness, then compute input labels for π₁
+/// Verifier: verify Lamport sig in assert_witness, then compute input labels for π₁ and x_d
 /// from the base finalized instance and return them in the ChallengeAssert witness.
 pub fn babe_verifier_challenge_assert_cac(
     assert_witness: &TxAssertWitness,
@@ -278,7 +289,7 @@ pub fn babe_verifier_challenge_assert_cac(
     let x_d = Fr::from_le_bytes_mod_order(&assert_witness.x_d);
 
     println!("Verifier: Checking the Lamport signature in tx_Assert witness against pi1 and lpk_P...");
-    if !lamport_verify(&verifier_state.lpk_p, &pi1, &assert_witness.lamport_sig) {
+    if !lamport_verify(&verifier_state.lpk_p, &pi1, x_d, &assert_witness.lamport_sig) {
         return None;
     }
 
@@ -286,7 +297,9 @@ pub fn babe_verifier_challenge_assert_cac(
     let base_idx = verifier_state.finalized_indices[0];
     let base_inst = &verifier_state.verifier.instances[base_idx];
     // Todo: fix this (use x_d)
-    let input_labels = base_inst.compute_pi1_labels_based_on_value(pi1);
+    let pi1_input_labels = base_inst.compute_pi1_labels_based_on_value(pi1);
+    let x_d_input_labels = base_inst.compute_x_d_labels_based_on_value(x_d);
+    let input_labels = pi1_input_labels.into_iter().chain(x_d_input_labels).collect::<Vec<_>>();
     // all_labels[0..2] are constant-wire labels; [2..] are π₁ input labels.
     let input_labels: Vec<[u8; 16]> = input_labels.iter().map(|s| s.0).collect();
 
@@ -310,13 +323,12 @@ pub fn babe_prover_wrongly_challenged_cac(
     prover_state: &ProverSetupState,
 ) -> Option<(TxWronglyChallengedWitness, usize)> {
     let base_input_labels: Vec<S> = challenge_witness.input_labels.iter().map(|&b| S(b)).collect();
-
+    assert_eq!(base_input_labels.len(), 762);
     let mut prover = BABEProver::new(pk.clone(), proof.clone(), dyn_pubin);
     let found = prover.check_compute_msg(
         &prover_state.finalized,
-        &base_input_labels,
-        // Todo: fix this with pi1 and x_d
-        &base_input_labels,
+        &base_input_labels[0..508],
+        &base_input_labels[508..],
         &prover_state.soldering,
         &prover_state.h_msgs,
     );
@@ -349,28 +361,18 @@ pub fn babe_prover_withdraw(sig_v_presig: BabeBtcSig) -> TxWithdrawWitness {
 // ─── Enc_ functions ────────────────────────────────────────────────────────
 
 /// Enc*(crs, x_S, |D|, msg, B; r):
-///   Inputs are split as [x_1..x_{|S|}] static, [x_{|S|+1}..x_{|S|+|D|}] dynamic.
-///   P_S = gamma_abc[0] + Σ_{k=0}^{|S|-1} x_S[k]·gamma_abc[k+1]
+///   P_S = gamma_abc[0] + Σ_{k} x_S[k]·gamma_abc[k+1]
 ///   mask = Y_S^r - e(r·B, γ) where Y_S^r = e(α, r·β) + e(P_S, r·γ)
-///   Returns (ctsetup, r·B) — r·B is garbler-private and never published.
+/// Same as Instance::enc_setup
 pub fn we_known_pi1_encsetup(
     vk: &Groth16VerifyingKey<Bn254>,
-    static_inputs: &[Fr],
-    num_dynamic: usize,
+    static_input: Fr,
     msg: &[u8],
     r_bytes: [u8; 32],
     b_blind: G1Affine,
 ) -> Option<(WeKnownPi1SetupCt, G1Affine)> {
-    let num_static = static_inputs.len();
-    if num_static + num_dynamic + 1 != vk.gamma_abc_g1.len() {
-        return None;
-    }
     let r = Fr::from_le_bytes_mod_order(&r_bytes);
-
-    let mut p_s = vk.gamma_abc_g1[0].into_group();
-    for (k, x) in static_inputs.iter().enumerate() {
-        p_s += vk.gamma_abc_g1[k + 1].into_group() * *x;
-    }
+    let p_s = vk.gamma_abc_g1[0].into_group() + vk.gamma_abc_g1[1].into_group() * static_input;
 
     let r_b = b_blind.into_group() * r;
     let r_delta = vk.delta_g2.into_group() * r;
@@ -405,14 +407,14 @@ pub fn we_known_pi1_encprove(
 ///   mask = e(r·π₁, π₂) - e(π₃, r·δ) - Q_blind  =  Y_S^r - e(r·B, γ)
 pub fn we_known_pi1_dec(
     vk: &Groth16VerifyingKey<Bn254>,
-    ctsetup: &WeKnownPi1SetupCt,
-    ctprove: &WeKnownPi1ProveCt,
+    ct_setup: &WeKnownPi1SetupCt,
+    ct_prove: &WeKnownPi1ProveCt,
     pi2: ark_bn254::G2Projective,
     pi3: ark_bn254::G1Projective,
 ) -> Option<Vec<u8>> {
-    let ct1 = g1_from_ser_checked(&ctprove.ct1_r_pi1)?;
-    let ct1_prime = g1_from_ser_checked(&ctprove.ct1_prime)?;
-    let ct2 = g2_from_ser_checked(&ctsetup.ct2_r_delta_g2)?;
+    let ct1 = g1_from_ser_checked(&ct_prove.ct1_r_pi1)?;
+    let ct1_prime = g1_from_ser_checked(&ct_prove.ct1_prime)?;
+    let ct2 = g2_from_ser_checked(&ct_setup.ct2_r_delta_g2)?;
 
     let r_y = Bn254::pairing(ct1, pi2) - Bn254::pairing(pi3, ct2);
     let q_blind = Bn254::pairing(ct1_prime, vk.gamma_g2);
@@ -420,12 +422,11 @@ pub fn we_known_pi1_dec(
 
     let mut mask_bytes = Vec::new();
     mask_gt.serialize_compressed(&mut mask_bytes).ok()?;
-    let mask = ro_from_pairing_bytes(&mask_bytes, ctsetup.ct3_masked_msg.len());
-    Some(ctsetup.ct3_masked_msg.iter().zip(mask.iter()).map(|(a, b)| a ^ b).collect())
+    let mask = ro_from_pairing_bytes(&mask_bytes, ct_setup.ct3_masked_msg.len());
+    Some(ct_setup.ct3_masked_msg.iter().zip(mask.iter()).map(|(a, b)| a ^ b).collect())
 }
 
 // ─── BABE C&C Soldering E2E flow ─────────────────────────────────────────────────────
-// Todo: fix errors.
 pub fn run_babe_e2e_cac() -> BabeCACE2ERun {
     let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(GROTH_16_SEED);
     let a = Fr::from(7u64);
@@ -525,7 +526,7 @@ pub fn run_babe_e2e_cac() -> BabeCACE2ERun {
 
     // ── Proving phase ─────────────────────────────────────────────────────────
 
-    // Assert: Prover posts π₁ + Lamport sig on-chain.
+    // Assert: Prover posts π₁ + x_d and Lamport sig on-chain.
     let assert_witness = babe_prover_assert(&proof, &prover_state.lsk_p, dynamic_public_inputs);
     println!("Prover: posting tx_Assert...");
     println!("tx_Assert witness:            {} bytes", assert_witness.size_bytes());
@@ -605,11 +606,14 @@ mod tests {
     fn lamport_sign_verify_roundtrip() {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let pi1 = G1Affine::from(ark_bn254::G1Projective::rand(&mut rng));
+        let x_d = ark_bn254::Fr::rand(&mut rng);
         let (lsk, lpk) = lamport_keygen(&mut rng);
-        let sig = lamport_sign(&lsk, &pi1);
-        assert!(lamport_verify(&lpk, &pi1, &sig));
+        let sig = lamport_sign(&lsk, &pi1, x_d);
+        assert!(lamport_verify(&lpk, &pi1, x_d, &sig));
         let pi1_other = G1Affine::from(ark_bn254::G1Projective::rand(&mut rng));
-        assert!(!lamport_verify(&lpk, &pi1_other, &sig));
+        assert!(!lamport_verify(&lpk, &pi1_other, x_d, &sig));
+        let x_d_other = ark_bn254::Fr::rand(&mut rng);
+        assert!(!lamport_verify(&lpk, &pi1, x_d_other, &sig));
     }
 
     #[test]
@@ -627,20 +631,19 @@ mod tests {
         ).unwrap();
 
         // |S|=1 (a*b is static), |D|=1 (a*a is dynamic).
-        let static_inputs = vec![a * b];
-        let dyn_inputs = vec![a * a];
-        let num_dynamic = 1usize;
+        let static_inputs = a * b;
+        let dyn_inputs = a * a;
         let secret = b"test-secret-32by";
         let r_bytes = h_256(b"r-test");
         let b_blind = G1Affine::generator();
 
         let (ct_setup, r_b_affine) = we_known_pi1_encsetup(
-            &vk, &static_inputs, num_dynamic, secret, r_bytes, b_blind,
+            &vk, static_inputs, secret, r_bytes, b_blind,
         ).unwrap();
         // Simulate DSGC: c1' = r·P_D + r·B
         // P_D = (a*a) · gamma_abc[|S|+1] = (a*a) · gamma_abc[2]
         let r = Fr::from_le_bytes_mod_order(&r_bytes);
-        let p_d = vk.gamma_abc_g1[2].into_group() * dyn_inputs[0];
+        let p_d = vk.gamma_abc_g1[2].into_group() * dyn_inputs;
         let c1_prime = (p_d * r + r_b_affine.into_group()).into_affine();
 
         let ct_prove = we_known_pi1_encprove(proof.a.into_group(), r_bytes, c1_prime);

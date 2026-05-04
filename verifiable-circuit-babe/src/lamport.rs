@@ -3,6 +3,7 @@
 use ark_bn254::G1Affine;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use garbled_snark_verifier::circuits::bn254::fr::Fr;
 use crate::babe::LAMPORT_N;
 use crate::utils::{derive_hashlock, pi1_to_bits};
 
@@ -34,16 +35,20 @@ pub fn lamport_keygen(rng: &mut impl RngCore) -> (LamportSk, LamportPk) {
 }
 
 /// Sign π₁: reveal sk[i][bit_i(π₁)] for each bit.
-pub fn lamport_sign(sk: &LamportSk, pi1: &G1Affine) -> LamportSig {
-    let bits = pi1_to_bits(pi1);
+pub fn lamport_sign(sk: &LamportSk, pi1: &G1Affine, x_d: ark_bn254::Fr) -> LamportSig {
+    let pi1_bits = pi1_to_bits(pi1);
+    let x_d_bits = Fr::to_bits(x_d);
+    let bits = pi1_bits.into_iter().chain(x_d_bits.into_iter()).collect::<Vec<_>>();
     LamportSig(bits.iter().enumerate().map(|(i, &b)| sk.0[i][b as usize]).collect())
 }
 
 /// Verify a Lamport signature against lpk_P and π₁.
-pub fn lamport_verify(pk: &LamportPk, pi1: &G1Affine, sig: &LamportSig) -> bool {
+pub fn lamport_verify(pk: &LamportPk, pi1: &G1Affine, x_d: ark_bn254::Fr, sig: &LamportSig) -> bool {
     if sig.0.len() != LAMPORT_N {
         return false;
     }
-    let bits = pi1_to_bits(pi1);
+    let pi1_bits = pi1_to_bits(pi1);
+    let x_d_bits = Fr::to_bits(x_d);
+    let bits = pi1_bits.into_iter().chain(x_d_bits.into_iter()).collect::<Vec<_>>();
     bits.iter().enumerate().all(|(i, &b)| derive_hashlock(&sig.0[i]) == pk.0[i][b as usize])
 }
