@@ -464,7 +464,7 @@ mod tests {
         let verifier = BABEVerifier::new(TEST_N_CC, &vk, static_public_inputs).unwrap();
         let package = verifier.commit();
         let finalized_indices = cac_finalize_indices(&package, TEST_M_CC);
-        let (_temp, finalized) = verifier.open(&finalized_indices);
+        let (_temp, finalized) = verifier.open(&finalized_indices).expect("verifier open failed");
 
         let soldered_input = build_soldered_wires_input(&verifier, &finalized_indices);
         let soldered_output = soldering_guest_compute(&soldered_input);
@@ -511,8 +511,8 @@ mod tests {
 
         // base_input_labels: active labels for the 508 π₁ input wires of the base instance.
         let base_idx = finalized_indices[0];
-        let pi1_labels = verifier.instances[base_idx].compute_pi1_labels_based_on_value(proof.a);
-        let x_d_labels = verifier.instances[base_idx].compute_x_d_labels_based_on_value(dynamic_public_inputs);
+        let pi1_labels = verifier.compute_pi1_labels(base_idx, proof.a);
+        let x_d_labels = verifier.compute_x_d_labels(base_idx, dynamic_public_inputs);
         let mut prover = BABEProver::new(pk.clone(), proof.clone(), dynamic_public_inputs);
 
         // Extract h_msgs from bitcoin script of WronglyChallenged Txn

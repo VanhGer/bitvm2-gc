@@ -166,7 +166,7 @@ pub fn babe_verifier_open_and_solder(
     verifier: &BABEVerifier,
     finalized_indices: &[usize],
 ) -> (Vec<(usize, u64)>, Vec<FinalizedInstanceData>, SolderingData, [u8; 20]) {
-    let (opened, finalized) = verifier.open(finalized_indices);
+    let (opened, finalized) = verifier.open(finalized_indices).expect("verifier open failed");
 
     // Note that this part will be replaced by generating soldering proof in production.
     let soldered_input = build_soldered_wires_input(verifier, finalized_indices);
@@ -295,10 +295,8 @@ pub fn babe_verifier_challenge_assert_cac(
 
     // Derive labels from the base instance (finalized_indices[0]).
     let base_idx = verifier_state.finalized_indices[0];
-    let base_inst = &verifier_state.verifier.instances[base_idx];
-    // Todo: fix this (use x_d)
-    let pi1_input_labels = base_inst.compute_pi1_labels_based_on_value(pi1);
-    let x_d_input_labels = base_inst.compute_x_d_labels_based_on_value(x_d);
+    let pi1_input_labels = verifier_state.verifier.compute_pi1_labels(base_idx, pi1);
+    let x_d_input_labels = verifier_state.verifier.compute_x_d_labels(base_idx, x_d);
     let input_labels = pi1_input_labels.into_iter().chain(x_d_input_labels).collect::<Vec<_>>();
     // all_labels[0..2] are constant-wire labels; [2..] are π₁ input labels.
     let input_labels: Vec<[u8; 16]> = input_labels.iter().map(|s| s.0).collect();

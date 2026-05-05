@@ -82,45 +82,59 @@ pub fn verify_opened_instances(
     static_public_inputs: Fr,
 ) -> Result<(), String> {
     use p3_maybe_rayon::prelude::*;
-    opened
-        .par_iter()
-        .map(|&(idx, seed)| {
-            let inst = CACInstance::new_from_seed(
-                seed,
-                vk,
-                static_public_inputs,
-            )?;
 
-            let recomputed = inst.commit();
-            let committed = &package.commits[idx];
+    const BATCH_SIZE: usize = 8;
 
-            if recomputed.epk != committed.epk {
-                return Err(format!("instance {idx}: input_commits mismatch"));
-            }
-            if recomputed.constant_commits_0 != committed.constant_commits_0
-                || recomputed.constant_commits_1 != committed.constant_commits_1 {
-                return Err(format!("instance {idx}: constant_commits mismatch"));
-            }
-            if recomputed.b_blind_commit != committed.b_blind_commit {
-                return Err(format!("instance {idx}: b_bind_commit mismatch"));
-            }
-            if recomputed.h_msg != committed.h_msg {
-                return Err(format!("instance {idx}: h_msg mismatch"));
-            }
-            if recomputed.h_ct_setup != committed.h_ct_setup {
-                return Err(format!("instance {idx}: ct_setup mismatch"));
-            }
-            if recomputed.com_adaptor != committed.com_adaptor {
-                return Err(format!("instance {idx}: com_adaptor mismatch"));
-            }
-            if recomputed.com_gc != committed.com_gc {
-                return Err(format!("instance {idx}: com_gc mismatch"));
-            }
-            Ok(())
-        })
-        .collect::<Vec<_>>()
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()?;
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(BATCH_SIZE)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    for batch in opened.chunks(BATCH_SIZE) {
+        // Process up to BATCH_SIZE instances in parallel; each instance is
+        // generated, checked, and dropped within the closure.
+        // Peak memory per batch: BATCH_SIZE × ~6 GB.
+        let results: Vec<Result<(), String>> = pool.install(|| {
+            batch
+                .par_iter()
+                .map(|&(idx, seed)| {
+                    let inst = CACInstance::new_from_seed(seed, vk, static_public_inputs)?;
+                    let recomputed = inst.commit();
+                    // inst (heavy GC data) is dropped here
+                    let committed = &package.commits[idx];
+
+                    if recomputed.epk != committed.epk {
+                        return Err(format!("instance {idx}: input_commits mismatch"));
+                    }
+                    if recomputed.constant_commits_0 != committed.constant_commits_0
+                        || recomputed.constant_commits_1 != committed.constant_commits_1
+                    {
+                        return Err(format!("instance {idx}: constant_commits mismatch"));
+                    }
+                    if recomputed.b_blind_commit != committed.b_blind_commit {
+                        return Err(format!("instance {idx}: b_bind_commit mismatch"));
+                    }
+                    if recomputed.h_msg != committed.h_msg {
+                        return Err(format!("instance {idx}: h_msg mismatch"));
+                    }
+                    if recomputed.h_ct_setup != committed.h_ct_setup {
+                        return Err(format!("instance {idx}: ct_setup mismatch"));
+                    }
+                    if recomputed.com_adaptor != committed.com_adaptor {
+                        return Err(format!("instance {idx}: com_adaptor mismatch"));
+                    }
+                    if recomputed.com_gc != committed.com_gc {
+                        return Err(format!("instance {idx}: com_gc mismatch"));
+                    }
+                    Ok(())
+                })
+                .collect()
+        });
+
+        for result in results {
+            result?;
+        }
+    }
     Ok(())
 }
 
@@ -215,7 +229,7 @@ mod tests {
 
         // Verifier opens: seeds for the rest, GC data for finalized.
         let now = std::time::Instant::now();
-        let (opened, finalized) = verifier.open(&finalized_indices);
+        let (opened, finalized) = verifier.open(&finalized_indices).expect("verifier open failed");
         assert_eq!(opened.len(), TEST_N_CC - TEST_M_CC);
         assert_eq!(finalized.len(), TEST_M_CC);
         let elapsed = now.elapsed();

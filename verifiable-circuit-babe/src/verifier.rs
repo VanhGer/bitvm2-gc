@@ -1,21 +1,45 @@
-use ark_bn254::Fr;
+use ark_bn254::{Fr, G1Affine};
 use ark_groth16::VerifyingKey as Groth16VerifyingKey;
 use rand::Rng;
+use garbled_snark_verifier::bag::S;
+use garbled_snark_verifier::dv_bn254::fq::Fq as DvFq;
+use garbled_snark_verifier::dv_bn254::fr::Fr as DvFr;
 use crate::instance::CACInstance;
+use crate::instance::commit::CACInstanceCommit;
+
+/// Number of instances generated in parallel per batch during the commitment phase.
+/// Tune to match available RAM: peak ≈ BATCH_SIZE × ~6 GB.
+const BATCH_SIZE: usize = 8;
+
+/// Minimal per-instance secrets retained after commitment phase.
+/// Only encoding keys and deltas are kept — all heavy GC data is dropped.
+pub struct InstanceLightSecrets {
+    pub delta: [S; 2],
+    pub encoding_keys: [Vec<S>; 2],
+}
 
 /// The C&C Verifier: manages N_CC garbled-circuit instances for Cut-and-Choose.
+///
+/// Instances are generated in batches of BATCH_SIZE. After each batch the heavy
+/// GC data (ciphertexts, adaptor tables) is dropped immediately; only the
+/// commitment hash and minimal secrets are retained. Peak memory is therefore
+/// BATCH_SIZE × ~6 GB rather than N_CC × ~6 GB.
 pub struct BABEVerifier {
-    /// All N_CC instances, each fully derived from its own seed.
-    pub instances: Vec<CACInstance>,
-    /// value used for CA_2 Txn
+    seeds: Vec<u64>,
+    commits: Vec<CACInstanceCommit>,
+    /// Encoding keys and deltas for every instance — needed for label computation
+    /// without re-deriving the full garbled circuit.
+    pub light_secrets: Vec<InstanceLightSecrets>,
     pub temp_val: [u8; 32],
+    vk: Groth16VerifyingKey<ark_bn254::Bn254>,
+    static_public_inputs: Fr,
 }
 
 impl BABEVerifier {
-    /// Create `n_cc` fresh instances and run `enc_setup` on each.
+    /// Create `n_cc` fresh instances processed in batches of BATCH_SIZE.
     ///
-    /// Each instance gets a random seed. `enc_setup` binds each instance's
-    /// secret message to the given Groth16 verifying key and public inputs.
+    /// For each batch: instances are generated in parallel, their commitments
+    /// and minimal secrets extracted, then the heavy GC data is dropped.
     pub fn new(
         n_cc: usize,
         vk: &Groth16VerifyingKey<ark_bn254::Bn254>,
@@ -26,74 +50,138 @@ impl BABEVerifier {
         let seeds: Vec<u64> = (0..n_cc).map(|_| rand::random()).collect();
 
         let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(8)
+            .num_threads(BATCH_SIZE)
             .build()
             .map_err(|e| e.to_string())?;
 
-        let instances = pool.install(|| {
-            seeds
-                .par_iter()
-                .map(|&seed| {
-                    CACInstance::new_from_seed(seed, vk, static_public_inputs)
-                })
-                .collect::<Vec<Result<_, _>>>()
-                .into_iter()
-                .collect::<Result<Vec<_>, _>>()
-        })?;
+        let mut commits = Vec::with_capacity(n_cc);
+        let mut light_secrets = Vec::with_capacity(n_cc);
+
+        for batch_seeds in seeds.chunks(BATCH_SIZE) {
+            // Generate up to BATCH_SIZE instances in parallel, extract what we need,
+            // then drop the heavy GC data at the end of this block.
+            let batch_results: Vec<Result<(CACInstanceCommit, InstanceLightSecrets), String>> =
+                pool.install(|| {
+                    batch_seeds
+                        .par_iter()
+                        .map(|&seed| {
+                            let inst = CACInstance::new_from_seed(seed, vk, static_public_inputs)?;
+                            let commit = inst.commit();
+                            let ls = InstanceLightSecrets {
+                                delta: inst.secrets.delta,
+                                encoding_keys: inst.secrets.encoding_keys.clone(),
+                            };
+                            // inst (ciphertexts_sets, adaptor_tables) is dropped here
+                            Ok((commit, ls))
+                        })
+                        .collect()
+                });
+
+            for result in batch_results {
+                let (commit, ls) = result?;
+                commits.push(commit);
+                light_secrets.push(ls);
+            }
+        }
 
         let rng = &mut rand::thread_rng();
         let mut temp_val = [0u8; 32];
         rng.fill(&mut temp_val);
 
-        Ok(Self { instances, temp_val })
+        Ok(Self {
+            seeds,
+            commits,
+            light_secrets,
+            temp_val,
+            vk: vk.clone(),
+            static_public_inputs,
+        })
     }
 
-    /// Build the C&C commit package: one `CACInstanceCommit` per instance.
-    /// Sent to the Prover at the start of the C&C protocol.
+    /// Return the C&C commit package from pre-computed commitments.
     pub fn commit(&self) -> crate::cac::CACSetupPackage {
         crate::cac::CACSetupPackage {
-            commits: self.instances.iter().map(|inst| inst.commit()).collect(),
+            commits: self.commits.clone(),
         }
     }
 
-    /// After receiving the Prover's finalized indices, reveal the open round:
-    /// - seeds for instance not in I
-    /// - GC data for every instance in I
+    /// After receiving the finalized indices, reveal:
+    /// - seeds for the non-finalized instances (N_CC - M_CC)
+    /// - full GC data for the M_CC finalized instances, regenerated one-by-one
+    ///
+    /// Peak memory during this call: 1 × ~6 GB (sequential regeneration).
     pub fn open(
         &self,
         finalized_indices: &[usize],
-    ) -> (Vec<(usize, u64)>, Vec<crate::cac::FinalizedInstanceData>) {
-        let mut opened = Vec::new();
-        for (i, inst) in self.instances.iter().enumerate() {
-            if !finalized_indices.contains(&i) {
-                opened.push((i, inst.seed));
-            }
-        }
+    ) -> Result<(Vec<(usize, u64)>, Vec<crate::cac::FinalizedInstanceData>), String> {
+        let finalized_set: std::collections::HashSet<usize> =
+            finalized_indices.iter().copied().collect();
 
-        let mut finalized = Vec::new();
+        let opened: Vec<(usize, u64)> = (0..self.seeds.len())
+            .filter(|i| !finalized_set.contains(i))
+            .map(|i| (i, self.seeds[i]))
+            .collect();
+
+        // Regenerate finalized instances sequentially to keep peak at 1 × ~6 GB.
+        let mut finalized = Vec::with_capacity(finalized_indices.len());
         for &i in finalized_indices {
-            let inst = &self.instances[i];
-            let constant_labels_0 = [
-                inst.secrets.constant_0labels[0][0], inst.secrets.constant_0labels[0][1] ^ inst.secrets.delta[0]
-            ];
+            let inst = CACInstance::new_from_seed(
+                self.seeds[i],
+                &self.vk,
+                self.static_public_inputs,
+            )?;
 
+            let constant_labels_0 = [
+                inst.secrets.constant_0labels[0][0],
+                inst.secrets.constant_0labels[0][1] ^ inst.secrets.delta[0],
+            ];
             let mut constant_labels_1 = vec![
-                inst.secrets.constant_0labels[1][0], inst.secrets.constant_0labels[1][1] ^ inst.secrets.delta[1]
+                inst.secrets.constant_0labels[1][0],
+                inst.secrets.constant_0labels[1][1] ^ inst.secrets.delta[1],
             ];
             constant_labels_1.extend(inst.get_b_value_labels());
 
-
             finalized.push(crate::cac::FinalizedInstanceData {
                 index: i,
-                ciphertext_sets: inst.ciphertexts_sets.clone(),
-                adaptor_tables: inst.adaptor_tables.clone(),
-                ct_setup: inst.ct_setup.clone(),
+                ciphertext_sets: inst.ciphertexts_sets,
+                adaptor_tables: inst.adaptor_tables,
+                ct_setup: inst.ct_setup,
                 constant_labels_0,
                 constant_labels_1: constant_labels_1.try_into().unwrap(),
-                b: inst.secrets.b
+                b: inst.secrets.b,
             });
+            // inst is dropped here
         }
 
-        (opened, finalized)
+        Ok((opened, finalized))
+    }
+
+    /// Compute the active π₁ input labels for instance `idx` given a concrete π₁.
+    pub fn compute_pi1_labels(&self, idx: usize, pi1: G1Affine) -> Vec<S> {
+        let ls = &self.light_secrets[idx];
+        let delta = ls.delta[0];
+        DvFq::to_bits(pi1.x)
+            .into_iter()
+            .chain(DvFq::to_bits(pi1.y))
+            .enumerate()
+            .map(|(i, b)| {
+                let key = ls.encoding_keys[0][i];
+                if b { key ^ delta } else { key }
+            })
+            .collect()
+    }
+
+    /// Compute the active x_d input labels for instance `idx` given a concrete x_d.
+    pub fn compute_x_d_labels(&self, idx: usize, x_d: Fr) -> Vec<S> {
+        let ls = &self.light_secrets[idx];
+        let delta = ls.delta[1];
+        DvFr::to_bits(x_d)
+            .into_iter()
+            .enumerate()
+            .map(|(i, b)| {
+                let key = ls.encoding_keys[1][i];
+                if b { key ^ delta } else { key }
+            })
+            .collect()
     }
 }
