@@ -122,36 +122,41 @@ impl BABEVerifier {
             .map(|i| (i, self.seeds[i]))
             .collect();
 
-        // Regenerate finalized instances sequentially to keep peak at 1 × ~6 GB.
-        let mut finalized = Vec::with_capacity(finalized_indices.len());
-        for &i in finalized_indices {
-            let inst = CACInstance::new_from_seed(
-                self.seeds[i],
-                &self.vk,
-                self.static_public_inputs,
-            )?;
+        // Regenerate all M_CC finalized instances in parallel (M_CC <= 4,
+        // so peak memory is at most 4 × ~6 GB).
+        use p3_maybe_rayon::prelude::*;
+        let finalized: Vec<Result<crate::cac::FinalizedInstanceData, String>> = finalized_indices
+            .par_iter()
+            .map(|&i| {
+                let inst = CACInstance::new_from_seed(
+                    self.seeds[i],
+                    &self.vk,
+                    self.static_public_inputs,
+                )?;
 
-            let constant_labels_0 = [
-                inst.secrets.constant_0labels[0][0],
-                inst.secrets.constant_0labels[0][1] ^ inst.secrets.delta[0],
-            ];
-            let mut constant_labels_1 = vec![
-                inst.secrets.constant_0labels[1][0],
-                inst.secrets.constant_0labels[1][1] ^ inst.secrets.delta[1],
-            ];
-            constant_labels_1.extend(inst.get_b_value_labels());
+                let constant_labels_0 = [
+                    inst.secrets.constant_0labels[0][0],
+                    inst.secrets.constant_0labels[0][1] ^ inst.secrets.delta[0],
+                ];
+                let mut constant_labels_1 = vec![
+                    inst.secrets.constant_0labels[1][0],
+                    inst.secrets.constant_0labels[1][1] ^ inst.secrets.delta[1],
+                ];
+                constant_labels_1.extend(inst.get_b_value_labels());
 
-            finalized.push(crate::cac::FinalizedInstanceData {
-                index: i,
-                ciphertext_sets: inst.ciphertexts_sets,
-                adaptor_tables: inst.adaptor_tables,
-                ct_setup: inst.ct_setup,
-                constant_labels_0,
-                constant_labels_1: constant_labels_1.try_into().unwrap(),
-                b: inst.secrets.b,
-            });
-            // inst is dropped here
-        }
+                Ok(crate::cac::FinalizedInstanceData {
+                    index: i,
+                    ciphertext_sets: inst.ciphertexts_sets,
+                    adaptor_tables: inst.adaptor_tables,
+                    ct_setup: inst.ct_setup,
+                    constant_labels_0,
+                    constant_labels_1: constant_labels_1.try_into().unwrap(),
+                    b: inst.secrets.b,
+                })
+                // inst is dropped here
+            })
+            .collect();
+        let finalized = finalized.into_iter().collect::<Result<Vec<_>, _>>()?;
 
         Ok((opened, finalized))
     }
