@@ -58,20 +58,21 @@ impl BABEVerifier {
         let mut light_secrets = Vec::with_capacity(n_cc);
 
         for batch_seeds in seeds.chunks(BATCH_SIZE) {
-            // Generate up to BATCH_SIZE instances in parallel, extract what we need,
-            // then drop the heavy GC data at the end of this block.
+            // Generate up to BATCH_SIZE instances in parallel. For each instance,
+            // stream-hash the ciphertexts and adaptor table without materializing them.
+            // Peak memory per batch: BATCH_SIZE × O(circuit_size) instead of
+            // BATCH_SIZE × O(circuit_size + ciphertexts + adaptor_tables).
             let batch_results: Vec<Result<(CACInstanceCommit, InstanceLightSecrets), String>> =
                 pool.install(|| {
                     batch_seeds
                         .par_iter()
                         .map(|&seed| {
-                            let inst = CACInstance::new_from_seed(seed, vk, static_public_inputs)?;
-                            let commit = inst.commit();
+                            let (commit, secrets) =
+                                CACInstance::commit_from_seed(seed, vk, static_public_inputs)?;
                             let ls = InstanceLightSecrets {
-                                delta: inst.secrets.delta,
-                                encoding_keys: inst.secrets.encoding_keys.clone(),
+                                delta: secrets.delta,
+                                encoding_keys: secrets.encoding_keys,
                             };
-                            // inst (ciphertexts_sets, adaptor_tables) is dropped here
                             Ok((commit, ls))
                         })
                         .collect()

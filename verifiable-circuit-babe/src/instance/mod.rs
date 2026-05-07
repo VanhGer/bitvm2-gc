@@ -4,7 +4,7 @@ use ark_ec::pairing::Pairing;
 use ark_ff::UniformRand;
 use garbled_snark_verifier::bag::{Circuit, S};
 use crate::babe::WeKnownPi1SetupCt;
-use crate::gc::{SparseAdaptorTable, SGC_PART1_CONSTANT_SIZE};
+use crate::gc::{gc_garble_and_hash, SparseAdaptorTable, SGC_PART1_CONSTANT_SIZE};
 use crate::instance::secret::InstanceSecrets;
 use ark_groth16::VerifyingKey as Groth16VerifyingKey;
 use ark_serialize::CanonicalSerialize;
@@ -12,7 +12,7 @@ use garbled_snark_verifier::dv_bn254::fq::Fq as DvFq;
 use garbled_snark_verifier::dv_bn254::fr::Fr as DvFr;
 use crate::dre::{Q_SIZE, U_BAR_SIZE};
 use crate::instance::commit::CACInstanceCommit;
-use crate::utils::{g2_to_ser, ro_from_pairing_bytes};
+use crate::utils::{derive_hashlock, g2_to_ser, h_256, ro_from_pairing_bytes};
 
 pub mod secret;
 pub mod commit;
@@ -173,6 +173,126 @@ impl CACInstance {
         })
     }
 
+    /// Commitment-only path: same circuit setup as `new_from_seed` but ciphertexts and
+    /// adaptor tables are stream-hashed without being stored. Produces identical
+    /// `CACInstanceCommit` values while keeping peak memory at O(circuit_size) instead
+    /// of O(circuit_size + ciphertexts + adaptor_tables).
+    ///
+    /// Returns the full `InstanceSecrets` alongside the commit so the caller can
+    /// extract encoding keys and deltas without a second derivation.
+    pub fn commit_from_seed(
+        seed: u64,
+        vk: &Groth16VerifyingKey<ark_bn254::Bn254>,
+        static_inputs: Fr,
+    ) -> Result<(CACInstanceCommit, InstanceSecrets), String> {
+        use ark_bn254::G1Projective;
+
+        if vk.gamma_abc_g1.len() != 3 {
+            return Err("static/dynamic split does not match vk".to_string());
+        }
+
+        let secrets = InstanceSecrets::new_from_seed(seed);
+        let (mut fgc, fgc_indices, mut sgc, sgc_indices) = crate::gc::read_fresh_gc();
+
+        for (i, &key) in secrets.encoding_keys[0].iter().enumerate() {
+            fgc.0[2 + i].borrow_mut().label = Some(key);
+        }
+        for (i, &key) in secrets.encoding_keys[1].iter().enumerate() {
+            sgc.0[SGC_PART1_CONSTANT_SIZE + i].borrow_mut().label = Some(key);
+        }
+
+        let b_x_bits = DvFq::to_bits(DvFq::as_montgomery(secrets.b.x));
+        let b_y_bits = DvFq::to_bits(DvFq::as_montgomery(secrets.b.y));
+        for (i, bit) in b_x_bits.iter().enumerate() {
+            sgc.0[2 + i].borrow_mut().value = Some(*bit);
+        }
+        for (i, bit) in b_y_bits.iter().enumerate() {
+            sgc.0[2 + 254 + i].borrow_mut().value = Some(*bit);
+        }
+
+        set_gc_const_labels(&mut fgc, &secrets.constant_0labels[0]);
+        set_gc_const_labels(&mut sgc, &secrets.constant_0labels[1]);
+
+        let pi1 = G1Projective::rand(&mut rand::thread_rng()).into_affine();
+        let x_d = ark_bn254::Fr::rand(&mut rand::thread_rng());
+
+        let fgc_witness: Vec<bool> = DvFq::to_bits(pi1.x).into_iter().chain(DvFq::to_bits(pi1.y)).collect();
+
+        // FGC: stream-hash ciphertexts, collect output label pairs (0-labels are deterministic).
+        let (com_fgc, fgc_output_labels) = garble_hash_and_output_labels(
+            &mut fgc, &fgc_indices, &fgc_witness, secrets.delta[0], 2,
+        );
+        assert_eq!(fgc_output_labels.len(), 2 * U_BAR_SIZE);
+
+        // SGC part 1.
+        let sgc_part1_witness: Vec<bool> = DvFr::to_bits(x_d);
+        let (com_sgc_1, sgc_output_labels_1) = garble_hash_and_output_labels(
+            &mut sgc, &sgc_indices, &sgc_part1_witness, secrets.delta[1], SGC_PART1_CONSTANT_SIZE,
+        );
+        assert_eq!(sgc_output_labels_1.len(), 2 * Q_SIZE);
+
+        // SGC part 2: reuse fgc (same pattern as new_from_seed).
+        fgc.reset_circuit_except_constants();
+        for (i, &key) in sgc_output_labels_1.iter().step_by(2).enumerate() {
+            fgc.0[2 + i].borrow_mut().label = Some(S(key));
+        }
+        set_gc_const_labels(&mut fgc, &secrets.constant_0labels[1][0..2]);
+        let (com_sgc_2, sgc_output_labels_2) = garble_hash_and_output_labels(
+            &mut fgc, &fgc_indices, &fgc_witness, secrets.delta[1], 2,
+        );
+        assert_eq!(sgc_output_labels_2.len(), 2 * U_BAR_SIZE);
+
+        // Adaptor tables: build and hash on-the-fly, never materialized.
+        let com_adaptor_0 = SparseAdaptorTable::build_and_hash(
+            secrets.r, &fgc_output_labels, &secrets.rhos[0], &secrets.fq_deltas[0],
+        );
+        let com_adaptor_1 = SparseAdaptorTable::build_and_hash(
+            secrets.r, &sgc_output_labels_2, &secrets.rhos[1], &secrets.fq_deltas[1],
+        );
+
+        // ct_setup (small).
+        let ct_setup = Self::enc_setup(&secrets, vk, static_inputs)?;
+        let mut ct_setup_bytes = Vec::new();
+        ct_setup_bytes.extend_from_slice(&ct_setup.ct2_r_delta_g2);
+        ct_setup_bytes.extend_from_slice(&ct_setup.ct3_masked_msg);
+
+        // Build the commit from hashes and small secret data — no GC data retained.
+        let delta = secrets.delta;
+        let epk: Vec<[[u8; 20]; 2]> = secrets.encoding_keys[0]
+            .iter()
+            .map(|&key| [derive_hashlock(&key.0), derive_hashlock(&(key ^ delta[0]).0)])
+            .chain(secrets.encoding_keys[1].iter().map(|&key| {
+                [derive_hashlock(&key.0), derive_hashlock(&(key ^ delta[1]).0)]
+            }))
+            .collect();
+
+        let constant_commits_0: [[[u8; 32]; 2]; 2] = std::array::from_fn(|w| {
+            let l0 = secrets.constant_0labels[0][w];
+            [h_256(&l0.0), h_256(&(l0 ^ delta[0]).0)]
+        });
+        let constant_commits_1: [[[u8; 32]; 2]; 510] = std::array::from_fn(|w| {
+            let l0 = secrets.constant_0labels[1][w];
+            [h_256(&l0.0), h_256(&(l0 ^ delta[1]).0)]
+        });
+
+        let mut b_blind_bytes = Vec::new();
+        secrets.b.serialize_compressed(&mut b_blind_bytes).expect("serialize b");
+
+        let commit = CACInstanceCommit {
+            epk,
+            constant_commits_0,
+            constant_commits_1,
+            b_blind_commit: h_256(&b_blind_bytes),
+            h_msg: derive_hashlock(&secrets.msg),
+            h_ct_setup: h_256(&ct_setup_bytes),
+            com_adaptor: [com_adaptor_0, com_adaptor_1],
+            com_gc: [com_fgc, com_sgc_1, com_sgc_2],
+        };
+
+        // fgc, sgc circuits (and their wire data) are dropped here.
+        Ok((commit, secrets))
+    }
+
     /// Enc*(crs, x_S, |D|, msg; r, B):
     ///   P_S = gamma_abc[0] + Σ_{k} x_S[k]·gamma_abc[k+1]
     ///   mask = Y_S^r - e(r·B, γ) where Y_S^r = e(α, r·β) + e(P_S, r·γ)
@@ -283,6 +403,31 @@ pub fn set_gc_const_labels(
     for i in 0..constant_labels.len() {
         circuit.0[i].borrow_mut().label = Some(constant_labels[i]);
     }
+}
+
+/// Streaming variant: evaluate + stream-hash ciphertexts without materializing the Vec.
+/// Returns `(com_gc, output_label_pairs)` where output_label_pairs has 2 entries per
+/// output wire — the 0-label and the 1-label (0-label XOR delta).
+fn garble_hash_and_output_labels(
+    circuit: &mut Circuit,
+    output_indices: &[usize],
+    random_witness: &[bool],
+    delta: S,
+    const_skip: usize,
+) -> ([u8; 32], Vec<[u8; 16]>) {
+    circuit.set_witness_value(random_witness, const_skip);
+    for gate in &mut circuit.1 {
+        gate.evaluate();
+    }
+    let com_gc = gc_garble_and_hash(circuit, delta);
+    let output_labels: Vec<[u8; 16]> = output_indices
+        .iter()
+        .flat_map(|idx| {
+            let l0 = circuit.0[*idx].borrow().label.unwrap();
+            [l0.0, (l0 ^ delta).0]
+        })
+        .collect();
+    (com_gc, output_labels)
 }
 
 /// Generate ciphertexts and all output labels
