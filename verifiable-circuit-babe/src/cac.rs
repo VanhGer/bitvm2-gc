@@ -91,16 +91,15 @@ pub fn verify_opened_instances(
         .map_err(|e| e.to_string())?;
 
     for batch in opened.chunks(BATCH_SIZE) {
-        // Process up to BATCH_SIZE instances in parallel; each instance is
-        // generated, checked, and dropped within the closure.
-        // Peak memory per batch: BATCH_SIZE × ~6 GB.
+        // Process up to BATCH_SIZE instances in parallel. commit_from_seed stream-hashes
+        // ciphertexts and adaptor tables without materializing them, so peak memory per
+        // batch is BATCH_SIZE × O(circuit_size) instead of BATCH_SIZE × ~6 GB.
         let results: Vec<Result<(), String>> = pool.install(|| {
             batch
                 .par_iter()
                 .map(|&(idx, seed)| {
-                    let inst = CACInstance::new_from_seed(seed, vk, static_public_inputs)?;
-                    let recomputed = inst.commit();
-                    // inst (heavy GC data) is dropped here
+                    let (recomputed, _secrets) =
+                        CACInstance::commit_from_seed(seed, vk, static_public_inputs)?;
                     let committed = &package.commits[idx];
 
                     if recomputed.epk != committed.epk {
