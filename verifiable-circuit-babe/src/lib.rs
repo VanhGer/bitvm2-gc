@@ -9,3 +9,4 @@ pub mod utils;
 pub mod transactions;
 pub mod soldering;
 pub mod lamport;
+pub mod wots;

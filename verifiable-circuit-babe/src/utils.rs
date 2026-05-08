@@ -47,6 +47,28 @@ pub fn g2_from_ser_checked(v: &[u8]) -> Option<ark_bn254::G2Projective> {
     Some(a.into_group())
 }
 
+/// Encode pi1 and x_d into a 96-byte Wots96 message.
+/// Layout: pi1.x LE-32 || pi1.y LE-32 || x_d LE-32.
+/// Bit packing: bits[i] = (msg[i/8] >> (i%8)) & 1  (LSB-first within each byte).
+/// Bits 254-255 of each 32-byte chunk are always 0 (BN254 fields are < 2^254).
+pub fn pi1_xd_to_wots96_msg(pi1: &G1Affine, x_d: Fr) -> [u8; 96] {
+    let mut msg = [0u8; 96];
+    let mut tmp = Vec::new();
+
+    pi1.x.serialize_uncompressed(&mut tmp).expect("serialize pi1.x");
+    msg[..32].copy_from_slice(&tmp);
+
+    tmp.clear();
+    pi1.y.serialize_uncompressed(&mut tmp).expect("serialize pi1.y");
+    msg[32..64].copy_from_slice(&tmp);
+
+    tmp.clear();
+    x_d.serialize_uncompressed(&mut tmp).expect("serialize x_d");
+    msg[64..96].copy_from_slice(&tmp);
+
+    msg
+}
+
 pub fn pi1_to_bits(pi1: &G1Affine) -> Vec<bool> {
     use garbled_snark_verifier::dv_bn254::fq::Fq as GcFq;
     GcFq::to_bits(pi1.x).into_iter().chain(GcFq::to_bits(pi1.y)).collect()

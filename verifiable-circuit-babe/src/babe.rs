@@ -17,7 +17,10 @@ use crate::cac::{
     cac_finalize_indices, verify_finalized_instances, verify_opened_instances,
     CACSetupPackage, FinalizedInstanceData,
 };
-use crate::lamport::{lamport_keygen, lamport_sign, lamport_verify, LamportPk, LamportSk};
+
+use crate::wots::{wots96_verify, Wots96, Wots96PublicKey, Wots96Secret};
+use crate::utils::pi1_xd_to_wots96_msg;
+use bitvm::signatures::Wots;
 use crate::prover::{BABEProver, GROTH_16_SEED};
 use crate::soldering::{build_soldered_wires_input, soldering_guest_compute, SolderingData, SolderingProof};
 use crate::transactions::{OnchainSize, TxAssertWitness, TxChallengeAssertOutputLock, TxChallengeAssertWitness, TxDepositLock, TxNoWithdrawWitness, TxWithdrawWitness, TxWronglyChallengedWitness};
@@ -26,8 +29,10 @@ use crate::verifier::BABEVerifier;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-/// Number of bits in π₁ (G1Affine): 254 bits for x + 254 bits for y + 254 Fr
-pub const LAMPORT_N: usize = 762;
+/// Number of bits covering π₁ and x_d: 256 bits for x + 256 bits for y + 256 Fr.
+/// Each 254-bit field is padded to 256 bits (2 dummy zero MSBs) to align with
+/// the 96-byte Wots96 message (3 × 32-byte LE fields).
+pub const LAMPORT_N: usize = 768;
 
 /// Total number of C&C instances the Verifier creates and commits to.
 /// In practice, N_CC = 181.
@@ -74,9 +79,33 @@ pub enum BabeBtcSig {
 pub struct EncodingKeyPublic(pub Vec<[[u8; 20]; 2]>);
 
 pub fn compute_epk_with_delta(encoding_keys: &[Vec<S>; 2], delta: &[S; 2]) -> EncodingKeyPublic {
-    let fgc_pairs: Vec<[[u8; 20]; 2]> = encoding_keys[0].iter().map(|&key| [derive_hashlock(&key.0), derive_hashlock(&(key ^ delta[0]).0)]).collect();
-    let sgc_pairs: Vec<[[u8; 20]; 2]> = encoding_keys[1].iter().map(|&key| [derive_hashlock(&key.0), derive_hashlock(&(key ^ delta[1]).0)]).collect();
-    let pairs: Vec<[[u8; 20]; 2]> = fgc_pairs.into_iter().chain(sgc_pairs).collect();
+    // encoding_keys[0]: 508 entries — [0..254] pi1.x, [254..508] pi1.y.
+    // encoding_keys[1]: 254 entries — x_d.
+    let fgc_pairs: Vec<[[u8; 20]; 2]> = encoding_keys[0].iter()
+        .map(|&key| [derive_hashlock(&key.0), derive_hashlock(&(key ^ delta[0]).0)])
+        .collect();
+    let sgc_pairs: Vec<[[u8; 20]; 2]> = encoding_keys[1].iter()
+        .map(|&key| [derive_hashlock(&key.0), derive_hashlock(&(key ^ delta[1]).0)])
+        .collect();
+
+    // 2 dummy EPK pairs for each of the 3 padding-bit positions (bits 254-255 per 256-bit field).
+    // bit=0 entry matches the dummy label [0u8; 16] used in compute_pi1/x_d_labels.
+    // bit=1 entry is well-defined but never selected (the dummy bits are always 0).
+    let dummy_pair: [[u8; 20]; 2] = [
+        derive_hashlock(&[0u8; 16]),
+        derive_hashlock(&[1u8; 16]),
+    ];
+
+    // Final layout (768 entries total):
+    //   pi1.x[254] | dummy[2] | pi1.y[254] | dummy[2] | x_d[254] | dummy[2]
+    let pairs: Vec<[[u8; 20]; 2]> = fgc_pairs[..254].iter().copied()
+        .chain([dummy_pair, dummy_pair])
+        .chain(fgc_pairs[254..].iter().copied())
+        .chain([dummy_pair, dummy_pair])
+        .chain(sgc_pairs.iter().copied())
+        .chain([dummy_pair, dummy_pair])
+        .collect();
+
     EncodingKeyPublic(pairs)
 }
 
@@ -120,7 +149,7 @@ pub struct WeKnownPi1ProveCt {
 /// In practice, prover has the commitment of input labels from the Verifier Txn skeletons.
 /// (Verifier just need to commit the base instance input labels)
 pub struct ProverSetupState {
-    pub lsk_p: LamportSk,
+    pub wots_sk_p: Wots96Secret,
     pub finalized: Vec<FinalizedInstanceData>,
     pub soldering: SolderingData,
     /// h_msg per finalized instance, in finalized-index order.
@@ -133,7 +162,7 @@ pub struct VerifierSetupState {
     pub verifier: BABEVerifier,
     pub package: CACSetupPackage,
     pub finalized_indices: Vec<usize>,
-    pub lpk_p: LamportPk,
+    pub wots_pk_p: Wots96PublicKey,
     pub presigs_p: ProverPresigs,
 }
 
@@ -254,14 +283,16 @@ pub fn babe_build_deposit_lock(pk_p: BtcPk, pk_v: BtcPk, amount: u64) -> TxDepos
 
 // ─── Assert phase (Prover posts π₁ and x_d) ─────────────────────────────────────────
 
-/// Prover: sign π₁ and x_d with lsk_P and build the assert witness.
-pub fn babe_prover_assert(proof: &Groth16Proof<Bn254>, lsk_p: &LamportSk, x_d: ark_bn254::Fr) -> TxAssertWitness {
+/// Prover: sign π₁ and x_d with wots_sk_P and build the assert witness.
+pub fn babe_prover_assert(proof: &Groth16Proof<Bn254>, wots_sk: &Wots96Secret, x_d: ark_bn254::Fr) -> TxAssertWitness {
     let pi1 = proof.a;
     let mut pi1_bytes = Vec::new();
     pi1.serialize_compressed(&mut pi1_bytes).expect("serialize π₁");
-    let mut x_d_bytes = Vec::new(); x_d.serialize_compressed(&mut x_d_bytes).expect("serialize x_d");
-    let lamport_sig = lamport_sign(lsk_p, &pi1, x_d);
-    TxAssertWitness { pi1: pi1_bytes, lamport_sig, x_d: x_d_bytes }
+    let mut x_d_bytes = Vec::new();
+    x_d.serialize_compressed(&mut x_d_bytes).expect("serialize x_d");
+    let msg = pi1_xd_to_wots96_msg(&pi1, x_d);
+    let wots_sig = Wots96::sign(wots_sk, &msg);
+    TxAssertWitness { pi1: pi1_bytes, x_d: x_d_bytes, wots_sig }
 }
 
 // ─── ChallengeAssert phase (Verifier reveals base-instance labels) ────────────
@@ -278,7 +309,7 @@ pub fn build_ca_outlock(
     }
 }
 
-/// Verifier: verify Lamport sig in assert_witness, then compute input labels for π₁ and x_d
+/// Verifier: verify Wots96 sig in assert_witness, then compute input labels for π₁ and x_d
 /// from the base finalized instance and return them in the ChallengeAssert witness.
 pub fn babe_verifier_challenge_assert_cac(
     assert_witness: &TxAssertWitness,
@@ -288,22 +319,36 @@ pub fn babe_verifier_challenge_assert_cac(
     let pi1 = G1Affine::deserialize_compressed(assert_witness.pi1.as_slice()).ok()?;
     let x_d = Fr::from_le_bytes_mod_order(&assert_witness.x_d);
 
-    println!("Verifier: Checking the Lamport signature in tx_Assert witness against pi1 and lpk_P...");
-    if !lamport_verify(&verifier_state.lpk_p, &pi1, x_d, &assert_witness.lamport_sig) {
+    let msg = pi1_xd_to_wots96_msg(&pi1, x_d);
+    println!("Verifier: Checking Wots96 signature in tx_Assert against pi1, x_d and wots_pk_p...");
+    if !wots96_verify(&verifier_state.wots_pk_p, &msg, &assert_witness.wots_sig) {
         return None;
     }
 
     // Derive labels from the base instance (finalized_indices[0]).
     let base_idx = verifier_state.finalized_indices[0];
-    let pi1_input_labels = verifier_state.verifier.compute_pi1_labels(base_idx, pi1);
-    let x_d_input_labels = verifier_state.verifier.compute_x_d_labels(base_idx, x_d);
-    let input_labels = pi1_input_labels.into_iter().chain(x_d_input_labels).collect::<Vec<_>>();
-    // all_labels[0..2] are constant-wire labels; [2..] are π₁ input labels.
-    let input_labels: Vec<[u8; 16]> = input_labels.iter().map(|s| s.0).collect();
+
+    // compute_pi1_labels returns 508 labels: [0..254] for pi1.x, [254..508] for pi1.y.
+    // compute_x_d_labels returns 254 labels.
+    // Interleave 6 dummy labels at the 2 MSB padding positions of each 256-bit field:
+    //   pi1.x[254] | dummy[2] | pi1.y[254] | dummy[2] | x_d[254] | dummy[2] = 768
+    // Dummy value [0u8; 16] is consistent: derive_hashlock(&[0u8; 16]) == epk[i][0] for
+    // the dummy EPK entries computed in compute_epk_with_delta (Step 13).
+    let pi1_labels = verifier_state.verifier.compute_pi1_labels(base_idx, pi1);
+    let x_d_labels = verifier_state.verifier.compute_x_d_labels(base_idx, x_d);
+    let dummy = S([0u8; 16]);
+    let input_labels: Vec<[u8; 16]> = pi1_labels[..254].iter()
+        .chain([dummy, dummy].iter())
+        .chain(pi1_labels[254..].iter())
+        .chain([dummy, dummy].iter())
+        .chain(x_d_labels.iter())
+        .chain([dummy, dummy].iter())
+        .map(|s| s.0)
+        .collect();
 
     Some(TxChallengeAssertWitness {
         input_labels,
-        lamport_sig: assert_witness.lamport_sig.clone(),
+        wots_sig: assert_witness.wots_sig,
         sig_v: BabeBtcSig::VerifierLiveSig,
         sig_p: sig_p_presig,
     })
@@ -321,12 +366,20 @@ pub fn babe_prover_wrongly_challenged_cac(
     prover_state: &ProverSetupState,
 ) -> Option<(TxWronglyChallengedWitness, usize)> {
     let base_input_labels: Vec<S> = challenge_witness.input_labels.iter().map(|&b| S(b)).collect();
-    assert_eq!(base_input_labels.len(), 762);
+    assert_eq!(base_input_labels.len(), 768);
+    // Layout: pi1.x[0..254] | dummy[254..256] | pi1.y[256..510] | dummy[510..512]
+    //       | x_d[512..766] | dummy[766..768]
+    // Strip the 6 dummy labels before passing to the GC (which has 762 real wires).
+    let pi1_labels: Vec<S> = base_input_labels[..254].iter()
+        .chain(base_input_labels[256..510].iter())
+        .copied()
+        .collect();
+    let x_d_labels: Vec<S> = base_input_labels[512..766].to_vec();
     let mut prover = BABEProver::new(pk.clone(), proof.clone(), dyn_pubin);
     let found = prover.check_compute_msg(
         &prover_state.finalized,
-        &base_input_labels[0..508],
-        &base_input_labels[508..],
+        &pi1_labels,
+        &x_d_labels,
         &prover_state.soldering,
         &prover_state.h_msgs,
     );
@@ -354,50 +407,6 @@ pub fn babe_prover_withdraw(sig_v_presig: BabeBtcSig) -> TxWithdrawWitness {
         input1_sig_p: BabeBtcSig::ProverLiveSig,
         input1_sig_v: sig_v_presig,
     }
-}
-
-// ─── Enc_ functions ────────────────────────────────────────────────────────
-
-/// Enc*(crs, x_S, |D|, msg, B; r):
-///   P_S = gamma_abc[0] + Σ_{k} x_S[k]·gamma_abc[k+1]
-///   mask = Y_S^r - e(r·B, γ) where Y_S^r = e(α, r·β) + e(P_S, r·γ)
-/// Same as Instance::enc_setup
-pub fn we_known_pi1_encsetup(
-    vk: &Groth16VerifyingKey<Bn254>,
-    static_input: Fr,
-    msg: &[u8],
-    r_bytes: [u8; 32],
-    b_blind: G1Affine,
-) -> Option<(WeKnownPi1SetupCt, G1Affine)> {
-    let r = Fr::from_le_bytes_mod_order(&r_bytes);
-    let p_s = vk.gamma_abc_g1[0].into_group() + vk.gamma_abc_g1[1].into_group() * static_input;
-
-    let r_b = b_blind.into_group() * r;
-    let r_delta = vk.delta_g2.into_group() * r;
-
-    let t1 = Bn254::pairing(vk.alpha_g1, vk.beta_g2.into_group() * r);
-    let t2 = Bn254::pairing(p_s, vk.gamma_g2.into_group() * r);
-    let y_s_r = t1 + t2;
-
-    let q_b = Bn254::pairing(r_b, vk.gamma_g2);
-    let mask_gt = y_s_r - q_b;
-
-    let mut mask_bytes = Vec::new();
-    mask_gt.serialize_compressed(&mut mask_bytes).ok()?;
-    let mask = ro_from_pairing_bytes(&mask_bytes, msg.len());
-    let ct3: Vec<u8> = msg.iter().zip(mask.iter()).map(|(a, b)| a ^ b).collect();
-
-    Some((WeKnownPi1SetupCt { ct2_r_delta_g2: g2_to_ser(r_delta), ct3_masked_msg: ct3 }, r_b.into_affine()))
-}
-
-/// Encprove(crs, π₁; r): ctprove = r·π₁.
-pub fn we_known_pi1_encprove(
-    pi1: ark_bn254::G1Projective,
-    r_bytes: [u8; 32],
-    ct1_prime: G1Affine,
-) -> WeKnownPi1ProveCt {
-    let r = Fr::from_le_bytes_mod_order(&r_bytes);
-    WeKnownPi1ProveCt { ct1_r_pi1: g1_to_ser(pi1 * r), ct1_prime: g1_to_ser(ct1_prime.into_group()) }
 }
 
 /// Dec*(vk, ctsetup, ctprove, c1', π₂, π₃):
@@ -470,8 +479,9 @@ pub fn run_babe_e2e_cac() -> BabeCACE2ERun {
     babe_prover_verify_setup(&package, &opened, &finalized, &soldering, &vk, static_public_inputs)
         .expect("prover setup verification failed");
 
-    println!("Prover: generating Lamport signature...");
-    let (lsk_p, lpk_p) = lamport_keygen(&mut rng);
+    println!("Prover: generating Wots96 signing key...");
+    let wots_sk_p = Wots96::generate_secret_key();
+    let wots_pk_p = Wots96::generate_public_key(&wots_sk_p);
 
     // ── Create Txn Set and Presign ──────────────────────────────────────────────────
     println!("Prover: creating Tx Set and pre sign...");
@@ -508,7 +518,7 @@ pub fn run_babe_e2e_cac() -> BabeCACE2ERun {
     let deposit_lock = babe_build_deposit_lock(pk_p, pk_v, 100_000);
     // Both parties persist their setup state.
     let prover_state = ProverSetupState {
-        lsk_p,
+        wots_sk_p,
         finalized,
         soldering,
         h_msgs: tx_challenge_assert_outlock_p.h_msgs,
@@ -518,14 +528,14 @@ pub fn run_babe_e2e_cac() -> BabeCACE2ERun {
         verifier,
         package,
         finalized_indices,
-        lpk_p,
+        wots_pk_p,
         presigs_p: prover_presigs,
     };
 
     // ── Proving phase ─────────────────────────────────────────────────────────
 
-    // Assert: Prover posts π₁ + x_d and Lamport sig on-chain.
-    let assert_witness = babe_prover_assert(&proof, &prover_state.lsk_p, dynamic_public_inputs);
+    // Assert: Prover posts π₁ + x_d and Wots96 sig on-chain.
+    let assert_witness = babe_prover_assert(&proof, &prover_state.wots_sk_p, dynamic_public_inputs);
     println!("Prover: posting tx_Assert...");
     println!("tx_Assert witness:            {} bytes", assert_witness.size_bytes());
 
@@ -534,7 +544,7 @@ pub fn run_babe_e2e_cac() -> BabeCACE2ERun {
         &assert_witness,
         &verifier_state,
         verifier_state.presigs_p.sig_challenge_assert.clone(),
-    ).expect("Lamport sig invalid in assert witness");
+    ).expect("Wots96 sig invalid in assert witness");
     println!("Verifier: posting tx_ChallengeAssert...");
     println!("tx_ChallengeAssert witness:   {} bytes", challenge_witness.size_bytes());
 
@@ -587,10 +597,11 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for DummyMulCircuit<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_bn254::{Bn254, Fr};
-    use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
     use ark_ff::UniformRand;
     use rand::SeedableRng;
+    use crate::lamport::{lamport_keygen, lamport_sign, lamport_verify};
+    use crate::wots::{wots96_verify, Wots96};
+    use bitvm::signatures::Wots;
 
     #[test]
     fn hashlock_roundtrip() {
@@ -615,41 +626,26 @@ mod tests {
     }
 
     #[test]
-    fn we_encsetup_dec_roundtrip() {
-        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(GROTH_16_SEED);
-        let a = Fr::from(3u64);
-        let b = Fr::from(7u64);
-        let (pk, vk) = ark_groth16::Groth16::<Bn254>::setup(
-            DummyMulCircuit::<Fr> { a: Some(a), b: Some(b) }, &mut rng,
-        ).unwrap();
-        let proof = ark_groth16::Groth16::<Bn254>::prove(
-            &pk,
-            DummyMulCircuit::<Fr> { a: Some(a), b: Some(b) },
-            &mut rng,
-        ).unwrap();
+    fn wots96_sign_verify_roundtrip() {
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(2);
+        let pi1 = G1Affine::from(ark_bn254::G1Projective::rand(&mut rng));
+        let x_d = ark_bn254::Fr::rand(&mut rng);
 
-        // |S|=1 (a*b is static), |D|=1 (a*a is dynamic).
-        let static_inputs = a * b;
-        let dyn_inputs = a * a;
-        let secret = b"test-secret-32by";
-        let r_bytes = h_256(b"r-test");
-        let b_blind = G1Affine::generator();
+        let sk = Wots96::generate_secret_key();
+        let pk = Wots96::generate_public_key(&sk);
+        let msg = pi1_xd_to_wots96_msg(&pi1, x_d);
+        let sig = Wots96::sign(&sk, &msg);
 
-        let (ct_setup, r_b_affine) = we_known_pi1_encsetup(
-            &vk, static_inputs, secret, r_bytes, b_blind,
-        ).unwrap();
-        // Simulate DSGC: c1' = r·P_D + r·B
-        // P_D = (a*a) · gamma_abc[|S|+1] = (a*a) · gamma_abc[2]
-        let r = Fr::from_le_bytes_mod_order(&r_bytes);
-        let p_d = vk.gamma_abc_g1[2].into_group() * dyn_inputs;
-        let c1_prime = (p_d * r + r_b_affine.into_group()).into_affine();
+        assert!(wots96_verify(&pk, &msg, &sig));
 
-        let ct_prove = we_known_pi1_encprove(proof.a.into_group(), r_bytes, c1_prime);
+        // Wrong pi1 must fail.
+        let pi1_other = G1Affine::from(ark_bn254::G1Projective::rand(&mut rng));
+        let msg_other = pi1_xd_to_wots96_msg(&pi1_other, x_d);
+        assert!(!wots96_verify(&pk, &msg_other, &sig));
 
-
-        let decrypted = we_known_pi1_dec(
-            &vk, &ct_setup, &ct_prove, proof.b.into_group(), proof.c.into_group(),
-        ).unwrap();
-        assert_eq!(decrypted, secret);
+        // Wrong x_d must fail.
+        let x_d_other = ark_bn254::Fr::rand(&mut rng);
+        let msg_xd_other = pi1_xd_to_wots96_msg(&pi1, x_d_other);
+        assert!(!wots96_verify(&pk, &msg_xd_other, &sig));
     }
 }
