@@ -1,6 +1,5 @@
 use ark_bn254::{Fr, G1Affine};
 use ark_groth16::VerifyingKey as Groth16VerifyingKey;
-use rand::Rng;
 use garbled_snark_verifier::bag::S;
 use garbled_snark_verifier::dv_bn254::fq::Fq as DvFq;
 use garbled_snark_verifier::dv_bn254::fr::Fr as DvFr;
@@ -30,7 +29,6 @@ pub struct BABEVerifier {
     /// Encoding keys and deltas for every instance — needed for label computation
     /// without re-deriving the full garbled circuit.
     pub light_secrets: Vec<InstanceLightSecrets>,
-    pub temp_val: [u8; 32],
     vk: Groth16VerifyingKey<ark_bn254::Bn254>,
     static_public_inputs: Fr,
 }
@@ -85,15 +83,10 @@ impl BABEVerifier {
             }
         }
 
-        let rng = &mut rand::thread_rng();
-        let mut temp_val = [0u8; 32];
-        rng.fill(&mut temp_val);
-
         Ok(Self {
             seeds,
             commits,
             light_secrets,
-            temp_val,
             vk: vk.clone(),
             static_public_inputs,
         })

@@ -1,9 +1,9 @@
-use ark_bn254::{Bn254, Fr, G1Affine};
+use ark_bn254::{Bn254, Fr};
 use ark_ff::PrimeField;
 use ark_groth16::{Proof as Groth16Proof, VerifyingKey as Groth16VerifyingKey};
 use ark_groth16::ProvingKey as Groth16ProvingKey;
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::CanonicalSerialize;
 use ark_relations::lc;
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use rand::SeedableRng;
@@ -22,7 +22,7 @@ use crate::utils::pi1_xd_to_wots96_msg;
 use bitvm::signatures::Wots;
 use crate::prover::{BABEProver, GROTH_16_SEED};
 use crate::soldering::{build_soldered_wires_input, soldering_guest_compute, SolderingData, SolderingProof};
-use crate::transactions::{OnchainSize, TxAssertWitness, TxChallengeAssertOutputLock, TxChallengeAssertWitness, TxDepositLock, TxNoWithdrawWitness, TxWithdrawWitness, TxWronglyChallengedWitness};
+use crate::transactions::{OnchainSize, TxAssertWitness, TxChallengeAssertOutputLock, TxChallengeAssertWitness, TxDepositLock, TxWronglyChallengedWitness};
 pub use crate::utils::{derive_hashlock, g1_from_ser_checked, g1_to_ser, g2_from_ser_checked, g2_to_ser, groth16_vk_x, h_256, ro_from_pairing_bytes};
 use crate::verifier::BABEVerifier;
 
@@ -157,7 +157,7 @@ pub fn babe_verifier_cac_setup(
 pub fn babe_verifier_open_and_solder(
     verifier: &BABEVerifier,
     finalized_indices: &[usize],
-) -> (Vec<(usize, u64)>, Vec<FinalizedInstanceData>, SolderingData, [u8; 20]) {
+) -> (Vec<(usize, u64)>, Vec<FinalizedInstanceData>, SolderingData) {
     let (opened, finalized) = verifier.open(finalized_indices).expect("verifier open failed");
 
     // Note that this part will be replaced by generating soldering proof in production.
@@ -169,7 +169,7 @@ pub fn babe_verifier_open_and_solder(
         soldering_proof: SolderingProof { soldered_output, _proof: PhantomData },
     };
 
-    (opened, finalized, soldering, derive_hashlock(&verifier.temp_val))
+    (opened, finalized, soldering)
 }
 
 /// Prover: verify the opened instances, the finalized instances, and the soldering proof.
@@ -249,13 +249,9 @@ pub fn babe_build_deposit_lock(pk_p: BtcPk, pk_v: BtcPk, amount: u64) -> TxDepos
 /// Prover: sign π₁ and x_d with wots_sk_P and build the assert witness.
 pub fn babe_prover_assert(proof: &Groth16Proof<Bn254>, wots_sk: &Wots96Secret, x_d: ark_bn254::Fr) -> TxAssertWitness {
     let pi1 = proof.a;
-    let mut pi1_bytes = Vec::new();
-    pi1.serialize_compressed(&mut pi1_bytes).expect("serialize π₁");
-    let mut x_d_bytes = Vec::new();
-    x_d.serialize_compressed(&mut x_d_bytes).expect("serialize x_d");
     let msg = pi1_xd_to_wots96_msg(&pi1, x_d);
     let wots_sig = Wots96::sign(wots_sk, &msg);
-    TxAssertWitness { pi1: pi1_bytes, x_d: x_d_bytes, wots_sig }
+    TxAssertWitness { wots_sig }
 }
 
 // ─── ChallengeAssert phase (Verifier reveals base-instance labels) ────────────
@@ -279,8 +275,7 @@ pub fn babe_verifier_challenge_assert_cac(
     verifier_state: &VerifierSetupState,
     sig_p_presig: BabeBtcSig,
 ) -> Option<TxChallengeAssertWitness> {
-    let pi1 = G1Affine::deserialize_compressed(assert_witness.pi1.as_slice()).ok()?;
-    let x_d = Fr::from_le_bytes_mod_order(&assert_witness.x_d);
+    let (pi1, x_d) = assert_witness.recover_pi1_xd_without_verify()?;
 
     let msg = pi1_xd_to_wots96_msg(&pi1, x_d);
     println!("Verifier: Checking Wots96 signature in tx_Assert against pi1, x_d and wots_pk_p...");
@@ -417,7 +412,7 @@ pub fn run_babe_e2e_cac() -> BabeCACE2ERun {
 
     // Verifier opens non-finalized instances and generates soldering proof.
     println!("Verifier: opening and soldering...");
-    let (opened, finalized, soldering, _hash_temp_val) = babe_verifier_open_and_solder(&verifier, &finalized_indices);
+    let (opened, finalized, soldering) = babe_verifier_open_and_solder(&verifier, &finalized_indices);
 
     println!("Prover: verifying opening and soldering proof...");
     // Prover verifies everything.
@@ -541,6 +536,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for DummyMulCircuit<F> {
 
 #[cfg(test)]
 mod tests {
+    use ark_bn254::G1Affine;
     use super::*;
     use ark_ff::UniformRand;
     use rand::SeedableRng;

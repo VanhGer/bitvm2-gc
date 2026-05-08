@@ -1,5 +1,7 @@
 // ─── Transaction locking script ───────────────────────────────────────────────
 
+use ark_bn254::{Fq, Fr, G1Affine};
+use ark_serialize::CanonicalDeserialize;
 use serde::{Deserialize, Serialize};
 use crate::babe::{BabeBtcSig, BtcPk, BTC_SIG_BYTES, MSG_BYTES};
 use crate::wots::{Wots96, Wots96Sig};
@@ -28,15 +30,23 @@ pub struct TxChallengeAssertOutputLock {
 /// Script verifies the Wots96 signature over the 96-byte message (π₁.x ∥ π₁.y ∥ x_d).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TxAssertWitness {
-    /// Compressed G1Affine, 33 bytes — the asserted proof element.
-    /// In practice, this is not onchain.
-    pub pi1: Vec<u8>,
-    /// Dynamic public input scalar x_d, 32 bytes (little-endian Fr).
-    /// This is not onchain.
-    pub x_d: Vec<u8>,
     /// Wots96 signature over the 96-byte message (π₁.x LE-32 ∥ π₁.y LE-32 ∥ x_d LE-32).
-    /// This is submitted onchain.
+    /// π₁ and x_d are recoverable from the digit values embedded in this signature.
     pub wots_sig: Wots96Sig,
+}
+
+impl TxAssertWitness {
+    /// Extract π₁ and x_d from the digit values embedded in the Wots96 signature.
+    /// The 96-byte message layout is: π₁.x (LE-32) ∥ π₁.y (LE-32) ∥ x_d (LE-32).
+    /// Does NOT verify the signature — caller must call wots96_verify separately.
+    pub fn recover_pi1_xd_without_verify(&self) -> Option<(G1Affine, Fr)> {
+        let msg = Wots96::signature_to_message(&self.wots_sig);
+        let x = Fq::deserialize_uncompressed(&msg[0..32]).ok()?;
+        let y = Fq::deserialize_uncompressed(&msg[32..64]).ok()?;
+        let pi1 = G1Affine::new_unchecked(x, y);
+        let x_d = Fr::deserialize_uncompressed(&msg[64..96]).ok()?;
+        Some((pi1, x_d))
+    }
 }
 
 /// tx_ChallengeAssert — witness for input 0.
@@ -106,8 +116,8 @@ pub trait OnchainSize {
 
 impl OnchainSize for TxAssertWitness {
     fn size_bytes(&self) -> usize {
-        // TOTAL_DIGIT_LEN hash-chain preimages, each 20 bytes.
-        Wots96::TOTAL_DIGIT_LEN as usize * 20
+        // Signature size
+        Wots96::TOTAL_DIGIT_LEN as usize * 21
     }
 }
 
