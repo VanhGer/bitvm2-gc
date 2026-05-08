@@ -127,26 +127,7 @@ impl CACInstance {
             &secrets.rhos[0],
             &secrets.fq_deltas[0],
         );
-
-        // // test table
-        //
-        // // size = gc_output_indices
-        // let output_labels: Vec<[u8; 16]> = fgc_indices
-        //     .iter()
-        //     .map(|idx| {
-        //         let w = fgc.0[*idx].borrow();
-        //         w.select_with_delta(w.get_value(), secrets.delta[0]).0
-        //     })
-        //     .collect();
-        //
-        // let ct1_bytes = BABEProver::eval_adaptor_table(
-        //     &output_labels, pi1, &fgc_adaptor_table
-        // );
-        // let mut expected_ct1_bytes = Vec::new();
-        // (pi1 * secrets.r).into_affine().serialize_compressed(&mut expected_ct1_bytes).expect("serialize r·G1P");
-        // assert_eq!(ct1_bytes, expected_ct1_bytes);
-        // println!("eval correctly");
-
+        
         let sgc_adaptor_table = SparseAdaptorTable::build_from_r_and_u_bar_labels(
             secrets.r,
             &sgc_output_labels_2,

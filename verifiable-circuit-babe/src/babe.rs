@@ -1,5 +1,4 @@
 use ark_bn254::{Bn254, Fr, G1Affine};
-use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
 use ark_groth16::{Proof as Groth16Proof, VerifyingKey as Groth16VerifyingKey};
 use ark_groth16::ProvingKey as Groth16ProvingKey;
@@ -77,42 +76,6 @@ pub enum BabeBtcSig {
 /// epk[i][b] = sha256(label_i_b), for i in 0..LAMPORT_N, b ∈ {0, 1}.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EncodingKeyPublic(pub Vec<[[u8; 20]; 2]>);
-
-pub fn compute_epk_with_delta(encoding_keys: &[Vec<S>; 2], delta: &[S; 2]) -> EncodingKeyPublic {
-    // encoding_keys[0]: 508 entries — [0..254] pi1.x, [254..508] pi1.y.
-    // encoding_keys[1]: 254 entries — x_d.
-    let fgc_pairs: Vec<[[u8; 20]; 2]> = encoding_keys[0].iter()
-        .map(|&key| [derive_hashlock(&key.0), derive_hashlock(&(key ^ delta[0]).0)])
-        .collect();
-    let sgc_pairs: Vec<[[u8; 20]; 2]> = encoding_keys[1].iter()
-        .map(|&key| [derive_hashlock(&key.0), derive_hashlock(&(key ^ delta[1]).0)])
-        .collect();
-
-    // 2 dummy EPK pairs for each of the 3 padding-bit positions (bits 254-255 per 256-bit field).
-    // bit=0 entry matches the dummy label [0u8; 16] used in compute_pi1/x_d_labels.
-    // bit=1 entry is well-defined but never selected (the dummy bits are always 0).
-    let dummy_pair: [[u8; 20]; 2] = [
-        derive_hashlock(&[0u8; 16]),
-        derive_hashlock(&[1u8; 16]),
-    ];
-
-    // Final layout (768 entries total):
-    //   pi1.x[254] | dummy[2] | pi1.y[254] | dummy[2] | x_d[254] | dummy[2]
-    let pairs: Vec<[[u8; 20]; 2]> = fgc_pairs[..254].iter().copied()
-        .chain([dummy_pair, dummy_pair])
-        .chain(fgc_pairs[254..].iter().copied())
-        .chain([dummy_pair, dummy_pair])
-        .chain(sgc_pairs.iter().copied())
-        .chain([dummy_pair, dummy_pair])
-        .collect();
-
-    EncodingKeyPublic(pairs)
-}
-
-pub fn compute_epk(encoding_keys: &[Vec<S>; 2]) -> EncodingKeyPublic {
-    use garbled_snark_verifier::core::utils::NON_CAC_DELTA;
-    compute_epk_with_delta(encoding_keys, &[NON_CAC_DELTA; 2])
-}
 
 // ─── Presig structs ───────────────────────────────────────────────────────────
 
@@ -333,7 +296,8 @@ pub fn babe_verifier_challenge_assert_cac(
     // Interleave 6 dummy labels at the 2 MSB padding positions of each 256-bit field:
     //   pi1.x[254] | dummy[2] | pi1.y[254] | dummy[2] | x_d[254] | dummy[2] = 768
     // Dummy value [0u8; 16] is consistent: derive_hashlock(&[0u8; 16]) == epk[i][0] for
-    // the dummy EPK entries computed in compute_epk_with_delta (Step 13).
+    // the dummy EPK entries computed in compute_epk_with_delta. Note that Prover & Verifier should
+    // embed this hashlock in the challengeAssert script in order to make the check passed.
     let pi1_labels = verifier_state.verifier.compute_pi1_labels(base_idx, pi1);
     let x_d_labels = verifier_state.verifier.compute_x_d_labels(base_idx, x_d);
     let dummy = S([0u8; 16]);
@@ -388,25 +352,6 @@ pub fn babe_prover_wrongly_challenged_cac(
         sig_p: BabeBtcSig::ProverLiveSig,
         msg: prover.valid_msg.unwrap(),
     }, prover.valid_finalized_id.unwrap()))
-}
-
-// ─── No-withdraw / Withdraw phases ───────────────────────────────────────────
-
-pub fn babe_verifier_no_withdraw(sig_p_presig: BabeBtcSig) -> TxNoWithdrawWitness {
-    TxNoWithdrawWitness {
-        input0_sig_p: sig_p_presig,
-        input0_sig_v: BabeBtcSig::VerifierLiveSig,
-        input1_sig_v: BabeBtcSig::VerifierLiveSig,
-    }
-}
-
-pub fn babe_prover_withdraw(sig_v_presig: BabeBtcSig) -> TxWithdrawWitness {
-    TxWithdrawWitness {
-        input0_sig_p: BabeBtcSig::ProverLiveSig,
-        input0_sig_v: sig_v_presig.clone(),
-        input1_sig_p: BabeBtcSig::ProverLiveSig,
-        input1_sig_v: sig_v_presig,
-    }
 }
 
 /// Dec*(vk, ctsetup, ctprove, c1', π₂, π₃):
@@ -599,7 +544,6 @@ mod tests {
     use super::*;
     use ark_ff::UniformRand;
     use rand::SeedableRng;
-    use crate::lamport::{lamport_keygen, lamport_sign, lamport_verify};
     use crate::wots::{wots96_verify, Wots96};
     use bitvm::signatures::Wots;
 
@@ -609,20 +553,6 @@ mod tests {
         let h_msg = derive_hashlock(secret);
         assert_eq!(derive_hashlock(secret), h_msg);
         assert_ne!(derive_hashlock(b"other"), h_msg);
-    }
-
-    #[test]
-    fn lamport_sign_verify_roundtrip() {
-        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
-        let pi1 = G1Affine::from(ark_bn254::G1Projective::rand(&mut rng));
-        let x_d = ark_bn254::Fr::rand(&mut rng);
-        let (lsk, lpk) = lamport_keygen(&mut rng);
-        let sig = lamport_sign(&lsk, &pi1, x_d);
-        assert!(lamport_verify(&lpk, &pi1, x_d, &sig));
-        let pi1_other = G1Affine::from(ark_bn254::G1Projective::rand(&mut rng));
-        assert!(!lamport_verify(&lpk, &pi1_other, x_d, &sig));
-        let x_d_other = ark_bn254::Fr::rand(&mut rng);
-        assert!(!lamport_verify(&lpk, &pi1, x_d_other, &sig));
     }
 
     #[test]
