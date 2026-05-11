@@ -102,7 +102,7 @@ impl CACInstance {
         assert_eq!(sgc_output_labels_1.len(), 2 * Q_SIZE);
         // Sgc - part 2
         // Reuse the fgc structure, by setting up the input & constant labels again, then evaluate.
-        fgc.reset_circuit_except_constants();
+        fgc.reset_circuit_except_01_constants();
         // set label of part2 as output of part1
         for (i, &key) in sgc_output_labels_1.iter().step_by(2).enumerate()  {
             fgc.0[2 + i].borrow_mut().label = Some(S(key));
@@ -213,7 +213,7 @@ impl CACInstance {
         assert_eq!(sgc_output_labels_1.len(), 2 * Q_SIZE);
 
         // SGC part 2: reuse fgc (same pattern as new_from_seed).
-        fgc.reset_circuit_except_constants();
+        fgc.reset_circuit_except_01_constants();
         for (i, &key) in sgc_output_labels_1.iter().step_by(2).enumerate() {
             fgc.0[2 + i].borrow_mut().label = Some(S(key));
         }
@@ -536,7 +536,7 @@ mod tests {
         println!("sgc part 1 test done");
 
         // evaluate the sgc part2 to get the r * Q
-        fgc.reset_circuit_except_constants();
+        fgc.reset_circuit_except_01_constants();
         // set label of part2 as output of part1 (evaluator has one active label per wire)
         for (i, &key) in sgc_output_labels_1.iter().enumerate()  {
             fgc.0[2 + i].borrow_mut().label = Some(S(key));
@@ -559,7 +559,7 @@ mod tests {
 
         let mut expected_ct1_prime_bytes = Vec::new();
         (q_affine * r).into_affine().serialize_compressed(&mut expected_ct1_prime_bytes).expect("serialize r·G1P");
-        assert_eq!(ct1_bytes, expected_ct1_bytes, "sgc part2 is wrong");
+        assert_eq!(ct1_prime, expected_ct1_prime_bytes, "sgc part2 is wrong");
         println!("sgc part 2 test done");
 
         let ctprove = WeKnownPi1ProveCt {

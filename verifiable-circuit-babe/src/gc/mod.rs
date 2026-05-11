@@ -62,7 +62,7 @@ pub fn read_fresh_gc() -> (Circuit, Vec<usize>, Circuit, Vec<usize>) {
     (fgc, fgc_indices, sgc, sgc_indices)
 }
 
-fn deserialize_circuit(gates_bytes: &Vec<u8>, output_indices_bytes: &Vec<u8>) -> (Circuit, Vec<usize>) {
+fn deserialize_circuit(gates_bytes: &[u8], output_indices_bytes: &[u8]) -> (Circuit, Vec<usize>) {
     let (num_wires, gates_read): (u32, Vec<SerializableGate>) =
         bincode::deserialize(gates_bytes).expect("deserialize gates");
     let output_indices: Vec<usize> =

@@ -116,7 +116,7 @@ impl Circuit {
             .for_each(|(bit, wirex)| wirex.borrow_mut().set_value_for_uninitialized(*bit));
     }
 
-    pub fn reset_circuit_except_constants(&mut self) {
+    pub fn reset_circuit_except_01_constants(&mut self) {
         for wirex in self.0.iter().skip(2) {
             wirex.borrow_mut().value = None;
         }

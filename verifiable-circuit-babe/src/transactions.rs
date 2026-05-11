@@ -43,7 +43,7 @@ impl TxAssertWitness {
         let msg = Wots96::signature_to_message(&self.wots_sig);
         let x = Fq::deserialize_uncompressed(&msg[0..32]).ok()?;
         let y = Fq::deserialize_uncompressed(&msg[32..64]).ok()?;
-        let pi1 = G1Affine::new_unchecked(x, y);
+        let pi1 = G1Affine::new(x, y);
         let x_d = Fr::deserialize_uncompressed(&msg[64..96]).ok()?;
         Some((pi1, x_d))
     }

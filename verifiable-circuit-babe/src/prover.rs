@@ -98,13 +98,15 @@ impl BABEProver {
         h_msgs_onchain: &[[u8; 20]],
     ) -> bool {
         let sld = &soldering.soldering_proof.soldered_output;
+        let (mut fgc, fgc_indices, mut sgc, sgc_indices) = crate::gc::read_fresh_gc();
 
         println!("Trying base instance...");
         let base_res = self.try_evaluate_instance(
             &finalized[0],
             &pi1_labels,
             &x_d_labels,
-            h_msgs_onchain[0]
+            h_msgs_onchain[0],
+            &mut fgc, &fgc_indices, &mut sgc, &sgc_indices,
         );
         match base_res {
             Ok(true) => return true,
@@ -144,11 +146,14 @@ impl BABEProver {
                 })
                 .collect();
 
+            fgc.reset_circuit_except_01_constants();
+            sgc.reset_circuit_except_01_constants();
             let temp = self.try_evaluate_instance(
                 &finalized[i],
                 &instance_pi1_labels,
                 &instance_x_d_labels,
-                h_msgs_onchain[i]
+                h_msgs_onchain[i],
+                &mut fgc, &fgc_indices, &mut sgc, &sgc_indices,
             );
             match temp {
                 Ok(true) => return true,
@@ -168,13 +173,16 @@ impl BABEProver {
         pi1_labels: &[S],
         x_d_labels: &[S],
         h_msg_onchain: [u8; 20],
+        fgc: &mut Circuit,
+        fgc_indices: &[usize],
+        sgc: &mut Circuit,
+        sgc_indices: &[usize],
     ) -> Result<bool, String> {
-        let (mut fgc, fgc_indices, mut sgc, sgc_indices) = crate::gc::read_fresh_gc();
         let ct_prove = self.compute_ct_prove(
-            &mut fgc,
-            &fgc_indices,
-            &mut sgc,
-            &sgc_indices,
+            fgc,
+            fgc_indices,
+            sgc,
+            sgc_indices,
             &[data.constant_labels_0.to_vec(), data.constant_labels_1.to_vec()],
             &pi1_labels,
             &x_d_labels,
@@ -182,8 +190,6 @@ impl BABEProver {
             &data.adaptor_tables,
             &data.b,
         );
-        drop(fgc);
-        drop(sgc);
         println!("compute ct_prove done");
 
         let msg = Self::compute_msg(&self.groth16_proof, &ct_prove, &data.ct_setup, &self.pk.vk)?;
@@ -263,7 +269,7 @@ impl BABEProver {
         // Part2: compute rQ
         let q = self.pk.vk.gamma_abc_g1[2] * self.dyn_pubin + b;
         let q_affine = q.into_affine();
-        fgc.reset_circuit_except_constants();
+        fgc.reset_circuit_except_01_constants();
         // set label of part2 as output of part1 (evaluator has one active label per wire)
         for (i, &key) in sgc_output_labels_1.iter().enumerate()  {
             fgc.0[2 + i].borrow_mut().label = Some(S(key));

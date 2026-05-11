@@ -27,12 +27,6 @@ pub use crate::utils::{derive_hashlock, g1_from_ser_checked, g1_to_ser, g2_from_
 use crate::verifier::BABEVerifier;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-
-/// Number of bits covering π₁ and x_d: 256 bits for x + 256 bits for y + 256 Fr.
-/// Each 254-bit field is padded to 256 bits (2 dummy zero MSBs) to align with
-/// the 96-byte Wots96 message (3 × 32-byte LE fields).
-pub const LAMPORT_N: usize = 768;
-
 /// Total number of C&C instances the Verifier creates and commits to.
 /// In practice, N_CC = 181.
 pub const N_CC: usize = 4;
@@ -41,14 +35,8 @@ pub const N_CC: usize = 4;
 /// In practice, M_CC = 4.
 pub const M_CC: usize = 2;
 
-/// Byte size of a Lamport signature on-chain: LAMPORT_N revealed 16-byte secrets.
-pub const LAMPORT_SIG_BYTES: usize = LAMPORT_N * 16;
-
 /// Byte size of a Bitcoin signature placeholder (64 bytes in production).
 pub const BTC_SIG_BYTES: usize = 32;
-
-/// Byte size of a compressed G1Affine point (π₁).
-pub const PI1_BYTES: usize = 33;
 
 /// Byte size of the secret message.
 pub const MSG_BYTES: usize = 32;
@@ -449,7 +437,7 @@ pub fn run_babe_e2e_cac() -> BabeCACE2ERun {
     let verifier_presigs = babe_verifier_presign();
     println!("Verifier: sending presigs_v to Verifier...");
 
-    println!("Prover: verifying presigs_p...");
+    println!("Prover: verifying presigs_v...");
     assert!(babe_verify_verifier_presigs(&verifier_presigs), "verifier presigs invalid");
 
     // ── Deposit ───────────────────────────────────────────────────────────────
