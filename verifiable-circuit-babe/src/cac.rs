@@ -83,7 +83,7 @@ pub fn verify_opened_instances(
 ) -> Result<(), String> {
     use p3_maybe_rayon::prelude::*;
 
-    const BATCH_SIZE: usize = 8;
+    const BATCH_SIZE: usize = 10;
 
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(BATCH_SIZE)
@@ -196,7 +196,7 @@ mod tests {
     use crate::prover::GROTH_16_SEED;
     use crate::verifier::BABEVerifier;
 
-    const TEST_N_CC: usize = 10;
+    const TEST_N_CC: usize = 50;
     const TEST_M_CC: usize = 4;
 
     #[test]

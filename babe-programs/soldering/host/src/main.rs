@@ -16,7 +16,7 @@ use verifiable_circuit_babe::verifier::BABEVerifier;
 
 const ELF: &[u8] = include_elf!("soldering-guest");
 
-const N_CC: usize = 4; // Number of C&C instances.
+const M_CC: usize = 4; // Number of finalized C&C instances.
 
 
 fn main() {
@@ -39,8 +39,8 @@ fn main() {
 
     //  1. Create N_CC instances
     let start = Instant::now();
-    let verifier = BABEVerifier::new(N_CC, &vk, static_public_inputs).expect("verifier setup failed");
-    info!(elapsed = ?start.elapsed(), n_cc = N_CC, "BABEVerifier created");
+    let verifier = BABEVerifier::new(M_CC, &vk, static_public_inputs).expect("verifier setup failed");
+    info!(elapsed = ?start.elapsed(), n_cc = M_CC, "BABEVerifier created");
 
     //  2. C&C commit and derive finalized indices
     let package = verifier.commit();

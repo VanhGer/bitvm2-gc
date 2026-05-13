@@ -8,7 +8,7 @@ use crate::instance::commit::CACInstanceCommit;
 
 /// Number of instances generated in parallel per batch during the commitment phase.
 /// Tune to match available RAM: peak ≈ BATCH_SIZE × ~6 GB.
-const BATCH_SIZE: usize = 8;
+const BATCH_SIZE: usize = 10;
 
 /// Minimal per-instance secrets retained after commitment phase.
 /// Only encoding keys and deltas are kept — all heavy GC data is dropped.
