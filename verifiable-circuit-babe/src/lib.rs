@@ -1,11 +1,19 @@
-pub mod babe;
 pub mod dre;
 pub mod gc;
-pub mod instance;
-pub mod prover;
-pub mod verifier;
-pub mod cac;
 pub mod utils;
-pub mod transactions;
 pub mod soldering;
+
+#[cfg(not(target_os = "zkvm"))]
+pub mod babe;
+#[cfg(not(target_os = "zkvm"))]
 pub mod wots;
+#[cfg(not(target_os = "zkvm"))]
+pub mod transactions;
+#[cfg(not(target_os = "zkvm"))]
+pub mod cac;
+#[cfg(not(target_os = "zkvm"))]
+pub mod prover;
+#[cfg(not(target_os = "zkvm"))]
+pub mod instance;
+#[cfg(not(target_os = "zkvm"))]
+pub mod verifier;

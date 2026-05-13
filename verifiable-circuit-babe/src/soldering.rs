@@ -74,6 +74,7 @@ pub fn soldering_guest_compute(input: &SolderedWiresInput) -> SolderedLabelsData
 }
 
 
+#[cfg(not(target_os = "zkvm"))]
 /// Build `SolderedWiresInput` from the verifier's finalized instances.
 /// `instances[0]` = base (finalized_indices[0]), `instances[1..]` = non-base in order.
 pub fn build_soldered_wires_input(
