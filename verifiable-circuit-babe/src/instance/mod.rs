@@ -4,7 +4,7 @@ use ark_ec::pairing::Pairing;
 use ark_ff::UniformRand;
 use garbled_snark_verifier::bag::{Circuit, S};
 use crate::babe::WeKnownPi1SetupCt;
-use crate::gc::{gc_garble_and_hash, SparseAdaptorTable, SGC_PART1_CONSTANT_SIZE};
+use crate::gc::{FlatEvalBuffer, read_flat_gc, SparseAdaptorTable, SGC_PART1_CONSTANT_SIZE};
 use crate::instance::secret::InstanceSecrets;
 use ark_groth16::VerifyingKey as Groth16VerifyingKey;
 use ark_serialize::CanonicalSerialize;
@@ -166,61 +166,49 @@ impl CACInstance {
         vk: &Groth16VerifyingKey<ark_bn254::Bn254>,
         static_inputs: Fr,
     ) -> Result<(CACInstanceCommit, InstanceSecrets), String> {
-        use ark_bn254::G1Projective;
-
         if vk.gamma_abc_g1.len() != 3 {
             return Err("static/dynamic split does not match vk".to_string());
         }
 
         let secrets = InstanceSecrets::new_from_seed(seed);
-        let (mut fgc, fgc_indices, mut sgc, sgc_indices) = crate::gc::read_fresh_gc();
+        let (fgc_flat, fgc_indices, sgc_flat, sgc_indices) = read_flat_gc();
 
-        for (i, &key) in secrets.encoding_keys[0].iter().enumerate() {
-            fgc.0[2 + i].borrow_mut().label = Some(key);
-        }
-        for (i, &key) in secrets.encoding_keys[1].iter().enumerate() {
-            sgc.0[SGC_PART1_CONSTANT_SIZE + i].borrow_mut().label = Some(key);
-        }
-
-        let b_x_bits = DvFq::to_bits(DvFq::as_montgomery(secrets.b.x));
-        let b_y_bits = DvFq::to_bits(DvFq::as_montgomery(secrets.b.y));
-        for (i, bit) in b_x_bits.iter().enumerate() {
-            sgc.0[2 + i].borrow_mut().value = Some(*bit);
-        }
-        for (i, bit) in b_y_bits.iter().enumerate() {
-            sgc.0[2 + 254 + i].borrow_mut().value = Some(*bit);
-        }
-
-        set_gc_const_labels(&mut fgc, &secrets.constant_0labels[0]);
-        set_gc_const_labels(&mut sgc, &secrets.constant_0labels[1]);
-
-        let pi1 = G1Projective::rand(&mut rand::thread_rng()).into_affine();
-        let x_d = ark_bn254::Fr::rand(&mut rand::thread_rng());
-
-        let fgc_witness: Vec<bool> = DvFq::to_bits(pi1.x).into_iter().chain(DvFq::to_bits(pi1.y)).collect();
-
-        // FGC: stream-hash ciphertexts, collect output label pairs (0-labels are deterministic).
-        let (com_fgc, fgc_output_labels) = garble_hash_and_output_labels(
-            &mut fgc, &fgc_indices, &fgc_witness, secrets.delta[0], 2,
-        );
+        // FGC: flat garble — no Rc/RefCell, no evaluate pass, cache-friendly.
+        let (com_fgc, fgc_output_labels) = {
+            let mut buf = FlatEvalBuffer::new(fgc_flat.num_wires);
+            for (i, l) in secrets.constant_0labels[0].iter().enumerate() {
+                buf.set_label(i, l.0);
+            }
+            for (i, &key) in secrets.encoding_keys[0].iter().enumerate() {
+                buf.set_label(2 + i, key.0);
+            }
+            buf.garble_and_hash(fgc_flat, fgc_indices, secrets.delta[0].0)
+        };
         assert_eq!(fgc_output_labels.len(), 2 * U_BAR_SIZE);
 
-        // SGC part 1.
-        let sgc_part1_witness: Vec<bool> = DvFr::to_bits(x_d);
-        let (com_sgc_1, sgc_output_labels_1) = garble_hash_and_output_labels(
-            &mut sgc, &sgc_indices, &sgc_part1_witness, secrets.delta[1], SGC_PART1_CONSTANT_SIZE,
-        );
+        // SGC Part 1: constant labels include wire-0, wire-1, and B-coordinate bits.
+        let (com_sgc_1, sgc_output_labels_1) = {
+            let mut buf = FlatEvalBuffer::new(sgc_flat.num_wires);
+            for (i, l) in secrets.constant_0labels[1].iter().enumerate() {
+                buf.set_label(i, l.0);
+            }
+            for (i, &key) in secrets.encoding_keys[1].iter().enumerate() {
+                buf.set_label(SGC_PART1_CONSTANT_SIZE + i, key.0);
+            }
+            buf.garble_and_hash(sgc_flat, sgc_indices, secrets.delta[1].0)
+        };
         assert_eq!(sgc_output_labels_1.len(), 2 * Q_SIZE);
 
-        // SGC part 2: reuse fgc (same pattern as new_from_seed).
-        fgc.reset_circuit_except_01_constants();
-        for (i, &key) in sgc_output_labels_1.iter().step_by(2).enumerate() {
-            fgc.0[2 + i].borrow_mut().label = Some(S(key));
-        }
-        set_gc_const_labels(&mut fgc, &secrets.constant_0labels[1][0..2]);
-        let (com_sgc_2, sgc_output_labels_2) = garble_hash_and_output_labels(
-            &mut fgc, &fgc_indices, &fgc_witness, secrets.delta[1], 2,
-        );
+        // SGC Part 2: same topology as FGC, SGC delta, input 0-labels from Part 1 outputs.
+        let (com_sgc_2, sgc_output_labels_2) = {
+            let mut buf = FlatEvalBuffer::new(fgc_flat.num_wires);
+            buf.set_label(0, secrets.constant_0labels[1][0].0);
+            buf.set_label(1, secrets.constant_0labels[1][1].0);
+            for (i, key) in sgc_output_labels_1.iter().step_by(2).enumerate() {
+                buf.set_label(2 + i, *key);
+            }
+            buf.garble_and_hash(fgc_flat, fgc_indices, secrets.delta[1].0)
+        };
         assert_eq!(sgc_output_labels_2.len(), 2 * U_BAR_SIZE);
 
         // Adaptor tables: build and hash on-the-fly, never materialized.
@@ -270,7 +258,6 @@ impl CACInstance {
             com_gc: [com_fgc, com_sgc_1, com_sgc_2],
         };
 
-        // fgc, sgc circuits (and their wire data) are dropped here.
         Ok((commit, secrets))
     }
 
@@ -384,31 +371,6 @@ pub fn set_gc_const_labels(
     for i in 0..constant_labels.len() {
         circuit.0[i].borrow_mut().label = Some(constant_labels[i]);
     }
-}
-
-/// Streaming variant: evaluate + stream-hash ciphertexts without materializing the Vec.
-/// Returns `(com_gc, output_label_pairs)` where output_label_pairs has 2 entries per
-/// output wire — the 0-label and the 1-label (0-label XOR delta).
-fn garble_hash_and_output_labels(
-    circuit: &mut Circuit,
-    output_indices: &[usize],
-    random_witness: &[bool],
-    delta: S,
-    const_skip: usize,
-) -> ([u8; 32], Vec<[u8; 16]>) {
-    circuit.set_witness_value(random_witness, const_skip);
-    for gate in &mut circuit.1 {
-        gate.evaluate();
-    }
-    let com_gc = gc_garble_and_hash(circuit, delta);
-    let output_labels: Vec<[u8; 16]> = output_indices
-        .iter()
-        .flat_map(|idx| {
-            let l0 = circuit.0[*idx].borrow().label.unwrap();
-            [l0.0, (l0 ^ delta).0]
-        })
-        .collect();
-    (com_gc, output_labels)
 }
 
 /// Generate ciphertexts and all output labels
