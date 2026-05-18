@@ -105,6 +105,35 @@ impl FlatEvalBuffer {
             .collect();
         (hash, output_labels)
     }
+
+    /// Like `garble_and_hash` but materializes ciphertexts for the evaluator path.
+    pub fn garble_and_collect(
+        &mut self,
+        flat: &FlatGates,
+        output_indices: &[usize],
+        delta: [u8; 16],
+    ) -> (Vec<Option<S>>, Vec<[u8; 16]>) {
+        let delta_s = S(delta);
+        let mut ciphertexts = Vec::with_capacity(flat.gates.len());
+
+        for &(a, b, c, gt, gid) in &flat.gates {
+            let a0 = S(self.labels[a as usize]);
+            let b0 = S(self.labels[b as usize]);
+            let gate_type = GateType::try_from(gt).expect("unknown gate type");
+            let (c0, ct) = gate_garbled_with_delta(a0, b0, gid, gate_type, delta_s);
+            self.labels[c as usize] = c0.0;
+            ciphertexts.push(ct);
+        }
+
+        let output_labels: Vec<[u8; 16]> = output_indices
+            .iter()
+            .flat_map(|&idx| {
+                let l0 = S(self.labels[idx]);
+                [l0.0, (l0 ^ delta_s).0]
+            })
+            .collect();
+        (ciphertexts, output_labels)
+    }
 }
 
 static FLAT_CIRCUIT_1: OnceLock<(FlatGates, Vec<usize>)> = OnceLock::new();

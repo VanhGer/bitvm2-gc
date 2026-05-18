@@ -1,7 +1,6 @@
 use ark_bn254::Fr;
-use ark_ec::{AffineRepr, CurveGroup};
+use ark_ec::AffineRepr;
 use ark_ec::pairing::Pairing;
-use ark_ff::UniformRand;
 use garbled_snark_verifier::bag::{Circuit, S};
 use crate::babe::WeKnownPi1SetupCt;
 use crate::gc::{FlatEvalBuffer, read_flat_gc, SparseAdaptorTable, SGC_PART1_CONSTANT_SIZE};
@@ -34,123 +33,66 @@ impl CACInstance {
         vk: &Groth16VerifyingKey<ark_bn254::Bn254>,
         static_inputs: Fr,
     ) -> Result<Self, String> {
-        use ark_bn254::G1Projective;
-
         if vk.gamma_abc_g1.len() != 3 {
             return Err("static/dynamic split does not match vk".to_string());
         }
 
-        // generate artifacts.
-        // crate::gc::generate_and_write_fresh_circuit(vk.gamma_abc_g1[2]);
-
         let secrets = InstanceSecrets::new_from_seed(seed);
+        let (fgc_flat, fgc_indices, sgc_flat, sgc_indices) = read_flat_gc();
 
-        // Load fresh circuit structure from pre-serialized files; drop after use.
-        let (mut fgc, fgc_indices, mut sgc, sgc_indices) = crate::gc::read_fresh_gc();
-
-        // Apply encoding keys as 0-labels for evaluator input wires (pi_x, pi_y, x_d).
-        for (i, &key) in secrets.encoding_keys[0].iter().enumerate() {
-            fgc.0[2 + i].borrow_mut().label = Some(key);
-        }
-        for (i, &key) in secrets.encoding_keys[1].iter().enumerate() {
-            sgc.0[SGC_PART1_CONSTANT_SIZE + i].borrow_mut().label = Some(key);
-        }
-
-        // Compute B bit representation (Montgomery form) for use as constant wires.
-        let b_x_bits: Vec<bool> = DvFq::to_bits(DvFq::as_montgomery(secrets.b.x));
-        let b_y_bits: Vec<bool> = DvFq::to_bits(DvFq::as_montgomery(secrets.b.y));
-        // Set constant wire value for sgc part 1
-        for (i, bit) in b_x_bits.iter().enumerate() {
-            sgc.0[2 + i].borrow_mut().value = Some(*bit);
-        }
-        for (i, bit) in b_y_bits.iter().enumerate() {
-            sgc.0[2 + 254 + i].borrow_mut().value = Some(*bit);
-        }
-
-        // set constant labels
-        set_gc_const_labels(&mut fgc, &secrets.constant_0labels[0]);
-        set_gc_const_labels(&mut sgc, &secrets.constant_0labels[1]);
-
-        // Evaluate circuit at a random pi1 and random x_d to garble
-        let pi1 = G1Projective::rand(&mut rand::thread_rng()).into_affine();
-        let x_d = ark_bn254::Fr::rand(&mut rand::thread_rng());
-
-        // Fgc
-        let fgc_witness: Vec<bool> = DvFq::to_bits(pi1.x)
-            .into_iter()
-            .chain(DvFq::to_bits(pi1.y))
-            .collect();
-        let (fgc_ciphertext, fgc_output_labels) = get_ciphertext_and_output_labels(
-            &mut fgc,
-            &fgc_indices,
-            &fgc_witness,
-            secrets.delta[0],
-            2
-        );
+        // FGC
+        let (fgc_ciphertext, fgc_output_labels) = {
+            let mut buf = FlatEvalBuffer::new(fgc_flat.num_wires);
+            for (i, l) in secrets.constant_0labels[0].iter().enumerate() {
+                buf.set_label(i, l.0);
+            }
+            for (i, &key) in secrets.encoding_keys[0].iter().enumerate() {
+                buf.set_label(2 + i, key.0);
+            }
+            buf.garble_and_collect(fgc_flat, fgc_indices, secrets.delta[0].0)
+        };
         assert_eq!(fgc_output_labels.len(), 2 * U_BAR_SIZE);
-        println!("cac instance fgc done");
-        // Sgc - part 1
-        let sgc_part1_witness: Vec<bool> = DvFr::to_bits(x_d);
-        let (sgc_ciphertext_1, sgc_output_labels_1) = get_ciphertext_and_output_labels(
-            &mut sgc,
-            &sgc_indices,
-            &sgc_part1_witness,
-            secrets.delta[1],
-            SGC_PART1_CONSTANT_SIZE,
-        );
-        println!("cac instance sgc part1 done");
+
+        // SGC Part 1
+        let (sgc_ciphertext_1, sgc_output_labels_1) = {
+            let mut buf = FlatEvalBuffer::new(sgc_flat.num_wires);
+            for (i, l) in secrets.constant_0labels[1].iter().enumerate() {
+                buf.set_label(i, l.0);
+            }
+            for (i, &key) in secrets.encoding_keys[1].iter().enumerate() {
+                buf.set_label(SGC_PART1_CONSTANT_SIZE + i, key.0);
+            }
+            buf.garble_and_collect(sgc_flat, sgc_indices, secrets.delta[1].0)
+        };
         assert_eq!(sgc_output_labels_1.len(), 2 * Q_SIZE);
-        // Sgc - part 2
-        // Reuse the fgc structure, by setting up the input & constant labels again, then evaluate.
-        fgc.reset_circuit_except_01_constants();
-        // set label of part2 as output of part1
-        for (i, &key) in sgc_output_labels_1.iter().step_by(2).enumerate()  {
-            fgc.0[2 + i].borrow_mut().label = Some(S(key));
-        }
-        // set constant for part2
-        set_gc_const_labels(&mut fgc, &secrets.constant_0labels[1][0..2]);
-        // random eval
-        let (sgc_ciphertext_2, sgc_output_labels_2) = get_ciphertext_and_output_labels(
-            &mut fgc,
-            &fgc_indices,
-            &fgc_witness,
-            secrets.delta[1],
-            2
-        );
+
+        // SGC Part 2: same topology as FGC, SGC delta, input 0-labels from Part 1 outputs.
+        let (sgc_ciphertext_2, sgc_output_labels_2) = {
+            let mut buf = FlatEvalBuffer::new(fgc_flat.num_wires);
+            buf.set_label(0, secrets.constant_0labels[1][0].0);
+            buf.set_label(1, secrets.constant_0labels[1][1].0);
+            for (i, key) in sgc_output_labels_1.iter().step_by(2).enumerate() {
+                buf.set_label(2 + i, *key);
+            }
+            buf.garble_and_collect(fgc_flat, fgc_indices, secrets.delta[1].0)
+        };
         assert_eq!(sgc_output_labels_2.len(), 2 * U_BAR_SIZE);
-        println!("cac instance sgc part 2 done");
-        // generate adaptor table
-        // fgc
+
         let fgc_adaptor_table = SparseAdaptorTable::build_from_r_and_u_bar_labels(
-            secrets.r,
-            &fgc_output_labels,
-            &secrets.rhos[0],
-            &secrets.fq_deltas[0],
+            secrets.r, &fgc_output_labels, &secrets.rhos[0], &secrets.fq_deltas[0],
         );
-        
         let sgc_adaptor_table = SparseAdaptorTable::build_from_r_and_u_bar_labels(
-            secrets.r,
-            &sgc_output_labels_2,
-            &secrets.rhos[1],
-            &secrets.fq_deltas[1],
+            secrets.r, &sgc_output_labels_2, &secrets.rhos[1], &secrets.fq_deltas[1],
         );
 
-        let ct_setup = Self::enc_setup(
-            &secrets,
-            vk,
-            static_inputs,
-        )?;
-
-        // circuit is dropped here — not stored in the instance.
+        let ct_setup = Self::enc_setup(&secrets, vk, static_inputs)?;
 
         Ok(Self {
             seed,
             secrets,
             ct_setup,
             adaptor_tables: [fgc_adaptor_table, sgc_adaptor_table],
-            // adaptor_tables: [fgc_adaptor_table.clone(), fgc_adaptor_table],
             ciphertexts_sets: [fgc_ciphertext, sgc_ciphertext_1, sgc_ciphertext_2],
-            // ciphertexts_sets: [fgc_ciphertext.clone(), fgc_ciphertext.clone(), fgc_ciphertext],
         })
     }
 
@@ -373,31 +315,6 @@ pub fn set_gc_const_labels(
     }
 }
 
-/// Generate ciphertexts and all output labels
-fn get_ciphertext_and_output_labels(
-    circuit: &mut Circuit,
-    output_indices: &[usize],
-    random_witness: &[bool],
-    delta: S,
-    const_skip: usize,
-) -> (Vec<Option<S>>, Vec<[u8; 16]>) {
-    circuit.set_witness_value(&random_witness, const_skip);
-    for gate in &mut circuit.1 {
-        gate.evaluate();
-    }
-    let ciphertexts = circuit.garbled_gates_with_delta(delta);
-
-    // size = gc_output_indices x 2
-    let output_labels: Vec<[u8; 16]> = output_indices
-        .iter()
-        .flat_map(|idx| {
-            let l0 = circuit.0[*idx].borrow().label.unwrap();
-            [l0.0, (l0 ^ delta).0]
-        })
-        .collect();
-
-    (ciphertexts, output_labels)
-}
 
 #[cfg(test)]
 mod tests {
