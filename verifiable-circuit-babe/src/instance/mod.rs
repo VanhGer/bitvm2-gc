@@ -320,6 +320,7 @@ pub fn set_gc_const_labels(
 mod tests {
     use super::*;
     use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
+    use ark_ec::CurveGroup;
     use rand::SeedableRng;
     use garbled_snark_verifier::circuits::bn254::g1::G1Affine;
     use crate::babe::DummyMulCircuit;
