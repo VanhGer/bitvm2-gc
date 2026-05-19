@@ -6,9 +6,9 @@ use garbled_snark_verifier::dv_bn254::fr::Fr as DvFr;
 use crate::instance::CACInstance;
 use crate::instance::commit::CACInstanceCommit;
 
-/// Number of instances generated in parallel per batch during the commitment phase.
-/// Tune to match available RAM: peak ≈ BATCH_SIZE × ~6 GB.
-const BATCH_SIZE: usize = 10;
+/// Instances processed in parallel per batch (RAM gate).
+/// Override via CAC_BATCH_SIZE env var at runtime.
+pub const BATCH_SIZE: usize = 8;
 
 /// Minimal per-instance secrets retained after commitment phase.
 /// Only encoding keys and deltas are kept — all heavy GC data is dropped.
@@ -21,8 +21,7 @@ pub struct InstanceLightSecrets {
 ///
 /// Instances are generated in batches of BATCH_SIZE. After each batch the heavy
 /// GC data (ciphertexts, adaptor tables) is dropped immediately; only the
-/// commitment hash and minimal secrets are retained. Peak memory is therefore
-/// BATCH_SIZE × ~6 GB rather than N_CC × ~6 GB.
+/// commitment hash and minimal secrets are retained.
 pub struct BABEVerifier {
     seeds: Vec<u64>,
     commits: Vec<CACInstanceCommit>,
@@ -47,19 +46,25 @@ impl BABEVerifier {
 
         let seeds: Vec<u64> = (0..n_cc).map(|_| rand::random()).collect();
 
+        let n_cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
+        let batch_size = std::env::var("CAC_BATCH_SIZE")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(BATCH_SIZE)
+            .min(n_cores)
+            .min(n_cc);
+
         let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(BATCH_SIZE)
+            .num_threads(batch_size)
             .build()
             .map_err(|e| e.to_string())?;
 
         let mut commits = Vec::with_capacity(n_cc);
         let mut light_secrets = Vec::with_capacity(n_cc);
 
-        for batch_seeds in seeds.chunks(BATCH_SIZE) {
+        for batch_seeds in seeds.chunks(batch_size) {
             // Generate up to BATCH_SIZE instances in parallel. For each instance,
             // stream-hash the ciphertexts and adaptor table without materializing them.
-            // Peak memory per batch: BATCH_SIZE × O(circuit_size) instead of
-            // BATCH_SIZE × O(circuit_size + ciphertexts + adaptor_tables).
             let batch_results: Vec<Result<(CACInstanceCommit, InstanceLightSecrets), String>> =
                 pool.install(|| {
                     batch_seeds
@@ -102,8 +107,6 @@ impl BABEVerifier {
     /// After receiving the finalized indices, reveal:
     /// - seeds for the non-finalized instances (N_CC - M_CC)
     /// - full GC data for the M_CC finalized instances, regenerated one-by-one
-    ///
-    /// Peak memory during this call: 1 × ~6 GB (sequential regeneration).
     pub fn open(
         &self,
         finalized_indices: &[usize],
@@ -116,8 +119,7 @@ impl BABEVerifier {
             .map(|i| (i, self.seeds[i]))
             .collect();
 
-        // Regenerate all M_CC finalized instances in parallel (M_CC <= 4,
-        // so peak memory is at most 4 × ~6 GB).
+        // Regenerate all M_CC finalized instances in parallel
         use p3_maybe_rayon::prelude::*;
         let finalized: Vec<Result<crate::cac::FinalizedInstanceData, String>> = finalized_indices
             .par_iter()

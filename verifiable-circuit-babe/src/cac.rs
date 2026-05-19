@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 use garbled_snark_verifier::dv_bn254::fq::Fq;
 use crate::instance::CACInstance;
 use crate::utils::h_256;
+use crate::verifier::BATCH_SIZE;
 
 /// What the Verifier sends to the Prover during the C&C commit phase.
 pub struct CACSetupPackage {
@@ -82,18 +83,23 @@ pub fn verify_opened_instances(
     static_public_inputs: Fr,
 ) -> Result<(), String> {
     use p3_maybe_rayon::prelude::*;
-
-    const BATCH_SIZE: usize = 10;
+    
+    let n_cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
+    let batch_size = std::env::var("CAC_BATCH_SIZE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(BATCH_SIZE)
+        .min(n_cores)
+        .min(opened.len().max(1));
 
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(BATCH_SIZE)
+        .num_threads(batch_size)
         .build()
         .map_err(|e| e.to_string())?;
 
-    for batch in opened.chunks(BATCH_SIZE) {
+    for batch in opened.chunks(batch_size) {
         // Process up to BATCH_SIZE instances in parallel. commit_from_seed stream-hashes
-        // ciphertexts and adaptor tables without materializing them, so peak memory per
-        // batch is BATCH_SIZE × O(circuit_size) instead of BATCH_SIZE × ~6 GB.
+        // ciphertexts and adaptor tables without materializing them
         let results: Vec<Result<(), String>> = pool.install(|| {
             batch
                 .par_iter()
