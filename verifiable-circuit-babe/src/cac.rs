@@ -230,6 +230,7 @@ mod tests {
         let elapsed = now.elapsed();
         println!("Verifier commit for {TEST_N_CC} instances took {elapsed:.2?}");
 
+        // Replaced by random in practice
         let finalized_indices = cac_finalize_indices(&package, TEST_M_CC);
 
         // Verifier opens: seeds for the rest, GC data for finalized.
