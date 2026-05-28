@@ -15,6 +15,9 @@ use garbled_snark_verifier::core::gate::{gate_garbled_with_delta, GateType};
 use garbled_snark_verifier::core::utils::SerializableGate;
 pub use utils::*;
 
+// ── Original artifact paths (unique wire IDs, used by read_fresh_gc) ─────────
+// garbled_evaluate_without_delta requires each Wire to be the output of exactly
+// one gate. These are the pre-compaction artifacts that preserve that invariant.
 fn fgc_gates_path() -> String {
     std::env::var("FGC_GATES_PATH").unwrap_or_else(|_| "./fgc_gates.bin".to_string())
 }
@@ -23,12 +26,31 @@ fn fgc_indices_path() -> String {
     std::env::var("FGC_OUT_INDICES_PATH").unwrap_or_else(|_| "./fgc_out_indices.bin".to_string())
 }
 
-fn sgc_part1_gates_path() -> String {
+fn sgc_gates_path() -> String {
     std::env::var("SGC_GATES_PATH").unwrap_or_else(|_| "./sgc_gates.bin".to_string())
 }
 
-fn sgc_part1_indices_path() -> String {
+fn sgc_indices_path() -> String {
     std::env::var("SGC_OUT_INDICES_PATH").unwrap_or_else(|_| "./sgc_out_indices.bin".to_string())
+}
+
+// ── Compact artifact paths (slot-reused wire IDs, used by read_flat_gc) ───────
+// Wire IDs are remapped to minimise FlatEvalBuffer size. Each slot may be reused
+// across gate steps (safe for Vec<[u8;16]> reads-before-write, not for RefCell).
+fn fgc_compact_gates_path() -> String {
+    std::env::var("FGC_COMPACT_GATES_PATH").unwrap_or_else(|_| "./fgc_compact_gates.bin".to_string())
+}
+
+fn fgc_compact_indices_path() -> String {
+    std::env::var("FGC_COMPACT_OUT_INDICES_PATH").unwrap_or_else(|_| "./fgc_compact_out_indices.bin".to_string())
+}
+
+fn sgc_compact_gates_path() -> String {
+    std::env::var("SGC_COMPACT_GATES_PATH").unwrap_or_else(|_| "./sgc_compact_gates.bin".to_string())
+}
+
+fn sgc_compact_indices_path() -> String {
+    std::env::var("SGC_COMPACT_OUT_INDICES_PATH").unwrap_or_else(|_| "./sgc_compact_out_indices.bin".to_string())
 }
 
 // ── Flat circuit ──────────────────────────────────────────────────────────────
@@ -133,8 +155,8 @@ pub fn read_flat_gc() -> (
     &'static FlatGates, &'static Vec<usize>,
 ) {
     let (fgc_flat, fgc_idx) = FLAT_CIRCUIT_1.get_or_init(|| {
-        let gates_path = fgc_gates_path();
-        let indices_path = fgc_indices_path();
+        let gates_path = fgc_compact_gates_path();
+        let indices_path = fgc_compact_indices_path();
         let gates_bytes = fs::read(&gates_path)
             .unwrap_or_else(|_| panic!("'{}' not found — run generate_compact_artifacts()", gates_path));
         let idx_bytes = fs::read(&indices_path)
@@ -142,8 +164,8 @@ pub fn read_flat_gc() -> (
         flat_from_bytes(&gates_bytes, &idx_bytes)
     });
     let (sgc_flat, sgc_idx) = FLAT_CIRCUIT_2.get_or_init(|| {
-        let gates_path = sgc_part1_gates_path();
-        let indices_path = sgc_part1_indices_path();
+        let gates_path = sgc_compact_gates_path();
+        let indices_path = sgc_compact_indices_path();
         let gates_bytes = fs::read(&gates_path)
             .unwrap_or_else(|_| panic!("'{}' not found — run generate_compact_artifacts()", gates_path));
         let idx_bytes = fs::read(&indices_path)
@@ -169,7 +191,9 @@ fn flat_from_bytes(gates_bytes: &[u8], output_indices_bytes: &[u8]) -> (FlatGate
 }
 
 /// Load both circuits as Rc/RefCell-based `Circuit` for evaluation.
-/// Reads from disk on every call — used by the Prover and tests.
+/// Reads from the ORIGINAL (non-compacted) artifacts — garbled_evaluate_without_delta
+/// requires each Wire to be the output of exactly one gate, which slot-reused
+/// compacted wire IDs would violate.
 pub fn read_fresh_gc() -> (Circuit, Vec<usize>, Circuit, Vec<usize>) {
     let fgc_gates_bytes = fs::read(fgc_gates_path())
         .unwrap_or_else(|_| panic!("'{}' not found — run generate_compact_artifacts()", fgc_gates_path()));
@@ -177,10 +201,10 @@ pub fn read_fresh_gc() -> (Circuit, Vec<usize>, Circuit, Vec<usize>) {
         .unwrap_or_else(|_| panic!("'{}' not found — run generate_compact_artifacts()", fgc_indices_path()));
     let (fgc, fgc_indices) = deserialize_circuit(&fgc_gates_bytes, &fgc_idx_bytes);
 
-    let sgc_gates_bytes = fs::read(sgc_part1_gates_path())
-        .unwrap_or_else(|_| panic!("'{}' not found — run generate_compact_artifacts()", sgc_part1_gates_path()));
-    let sgc_idx_bytes = fs::read(sgc_part1_indices_path())
-        .unwrap_or_else(|_| panic!("'{}' not found — run generate_compact_artifacts()", sgc_part1_indices_path()));
+    let sgc_gates_bytes = fs::read(sgc_gates_path())
+        .unwrap_or_else(|_| panic!("'{}' not found — run generate_compact_artifacts()", sgc_gates_path()));
+    let sgc_idx_bytes = fs::read(sgc_indices_path())
+        .unwrap_or_else(|_| panic!("'{}' not found — run generate_compact_artifacts()", sgc_indices_path()));
     let (sgc, sgc_indices) = deserialize_circuit(&sgc_gates_bytes, &sgc_idx_bytes);
 
     (fgc, fgc_indices, sgc, sgc_indices)

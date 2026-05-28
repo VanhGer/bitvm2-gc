@@ -34,16 +34,25 @@ fn compile_to_flat(
 }
 
 /// Forward pass over gates to record the last step at which each wire is read as input.
-/// Output wires are pinned to u32::MAX so their slots are never freed during garbling.
+/// Pre-initialized wires (constants + inputs) and output wires are pinned to u32::MAX
+/// so their slots are never freed or reused.
 fn compute_last_read(
     gates: &[(u32, u32, u32, u8, u32)],
     num_wires: usize,
     output_indices: &[usize],
+    num_pre_initialized: usize,
 ) -> Vec<u32> {
     let mut last_read = vec![u32::MAX; num_wires];
     for (step, &(a, b, _c, _gt, _gid)) in gates.iter().enumerate() {
         last_read[a as usize] = step as u32;
         last_read[b as usize] = step as u32;
+    }
+    // Pre-initialized wires (constants 0/1 + inputs) must never be freed.
+    // The gate loop above may have overwritten their entries with the last
+    // step that reads them; restore the sentinel so remap_wire_ids never
+    // puts their slots back on the free list.
+    for i in 0..num_pre_initialized {
+        last_read[i] = u32::MAX;
     }
     // Output wire labels must survive past the garbling loop.
     for &idx in output_indices {
@@ -80,16 +89,13 @@ fn remap_wire_ids(
         let (a, b, c, _gt, _gid) = *gate;
         let step_u32 = step as u32;
 
-        // Free dying input slots BEFORE allocating output — safe because garbling
-        // reads labels[a] and labels[b] before writing labels[c].
-        if last_read[a as usize] == step_u32 {
-            free_list.push(slot_of[a as usize]);
-        }
-        if b != a && last_read[b as usize] == step_u32 {
-            free_list.push(slot_of[b as usize]);
-        }
+        let sa = slot_of[a as usize];
+        let sb = slot_of[b as usize];
 
-        // Assign a slot to the output wire c.
+        // Allocate output slot BEFORE freeing inputs. This guarantees c's slot never
+        // equals a's or b's slot within the same gate — required for the Rc<RefCell<Wire>>
+        // circuit representation (read_fresh_gc), where wire_a and wire_c sharing a slot
+        // would cause a simultaneous-borrow panic.
         let slot = free_list.pop().unwrap_or_else(|| {
             let s = next_fresh;
             next_fresh += 1;
@@ -98,9 +104,18 @@ fn remap_wire_ids(
         slot_of[c as usize] = slot;
         max_slot = max_slot.max(slot);
 
-        gate.0 = slot_of[a as usize];
-        gate.1 = slot_of[b as usize];
+        gate.0 = sa;
+        gate.1 = sb;
         gate.2 = slot;
+
+        // Free dying input slots after c is assigned — slots become available for
+        // subsequent gates.
+        if last_read[a as usize] == step_u32 {
+            free_list.push(sa);
+        }
+        if b != a && last_read[b as usize] == step_u32 {
+            free_list.push(sb);
+        }
     }
 
     for idx in output_indices.iter_mut() {
@@ -169,16 +184,22 @@ pub fn generate_compact_artifacts(l2_point: G1Affine) -> [CircuitStats; 2] {
         compile_to_flat(bld.build(&[]), fgc_out_idx);
     let fgc_wires_orig = fgc_num_wires as usize;
 
+    // Write original (non-compacted) artifacts for read_fresh_gc() BEFORE remapping.
+    // garbled_evaluate_without_delta requires each Wire to be the output of exactly
+    // one gate; slot reuse would break its single-pass global-state assumption.
+    write_circuit(fgc_num_wires, &fgc_gates, &fgc_out_idx,
+                  &super::fgc_gates_path(), &super::fgc_indices_path());
+
     println!("[2/6] Analyzing FGC liveness ({} gates, {} wires)...", fgc_gates.len(), fgc_wires_orig);
-    let fgc_last_read = compute_last_read(&fgc_gates, fgc_wires_orig, &fgc_out_idx);
+    let fgc_last_read = compute_last_read(&fgc_gates, fgc_wires_orig, &fgc_out_idx, FGC_NUM_PRE_INITIALIZED);
     let fgc_max_live = remap_wire_ids(
         &mut fgc_gates, &mut fgc_num_wires, &mut fgc_out_idx,
         &fgc_last_read, FGC_NUM_PRE_INITIALIZED,
     );
 
-    println!("[3/6] Writing FGC artifacts (max_live_wires = {})...", fgc_max_live);
+    println!("[3/6] Writing FGC compact artifacts (max_live_wires = {})...", fgc_max_live);
     write_circuit(fgc_num_wires, &fgc_gates, &fgc_out_idx,
-                  &super::fgc_gates_path(), &super::fgc_indices_path());
+                  &super::fgc_compact_gates_path(), &super::fgc_compact_indices_path());
 
     let fgc_stats = CircuitStats {
         name: "FGC",
@@ -198,16 +219,19 @@ pub fn generate_compact_artifacts(l2_point: G1Affine) -> [CircuitStats; 2] {
         compile_to_flat(bld.build(&[]), sgc_out_idx);
     let sgc_wires_orig = sgc_num_wires as usize;
 
+    write_circuit(sgc_num_wires, &sgc_gates, &sgc_out_idx,
+                  &super::sgc_gates_path(), &super::sgc_indices_path());
+
     println!("[5/6] Analyzing SGC liveness ({} gates, {} wires)...", sgc_gates.len(), sgc_wires_orig);
-    let sgc_last_read = compute_last_read(&sgc_gates, sgc_wires_orig, &sgc_out_idx);
+    let sgc_last_read = compute_last_read(&sgc_gates, sgc_wires_orig, &sgc_out_idx, SGC_NUM_PRE_INITIALIZED);
     let sgc_max_live = remap_wire_ids(
         &mut sgc_gates, &mut sgc_num_wires, &mut sgc_out_idx,
         &sgc_last_read, SGC_NUM_PRE_INITIALIZED,
     );
 
-    println!("[6/6] Writing SGC artifacts (max_live_wires = {})...", sgc_max_live);
+    println!("[6/6] Writing SGC compact artifacts (max_live_wires = {})...", sgc_max_live);
     write_circuit(sgc_num_wires, &sgc_gates, &sgc_out_idx,
-                  &super::sgc_part1_gates_path(), &super::sgc_part1_indices_path());
+                  &super::sgc_compact_gates_path(), &super::sgc_compact_indices_path());
 
     let sgc_stats = CircuitStats {
         name: "SGC Part 1",
