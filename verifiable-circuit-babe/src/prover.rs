@@ -98,7 +98,7 @@ impl BABEProver {
         h_msgs_onchain: &[[u8; 20]],
     ) -> bool {
         let sld = &soldering.soldering_proof.soldered_output;
-        let (mut fgc, fgc_indices, mut sgc, sgc_indices) = crate::gc::read_fresh_gc();
+        let (mut fgc, fgc_indices, mut sgc, sgc_indices) = crate::gc::read_flat_original_gc();
 
         println!("Trying base instance...");
         let base_res = self.try_evaluate_instance(
@@ -427,7 +427,7 @@ mod tests {
             proof.clone(),
             dynamic_public_inputs
         );
-        let (mut fgc, fgc_indices, mut sgc, sgc_indices) = crate::gc::read_fresh_gc();
+        let (mut fgc, fgc_indices, mut sgc, sgc_indices) = crate::gc::read_flat_original_gc();
 
         let ct_prove = prover.compute_ct_prove(
             &mut fgc,

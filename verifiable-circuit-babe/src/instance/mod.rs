@@ -3,7 +3,7 @@ use ark_ec::AffineRepr;
 use ark_ec::pairing::Pairing;
 use garbled_snark_verifier::bag::{Circuit, S};
 use crate::babe::WeKnownPi1SetupCt;
-use crate::gc::{FlatEvalBuffer, read_flat_gc, SparseAdaptorTable, SGC_PART1_CONSTANT_SIZE};
+use crate::gc::{FlatEvalBuffer, read_compact_gc, SparseAdaptorTable, SGC_PART1_CONSTANT_SIZE};
 use crate::instance::secret::InstanceSecrets;
 use ark_groth16::VerifyingKey as Groth16VerifyingKey;
 use ark_serialize::CanonicalSerialize;
@@ -38,7 +38,7 @@ impl CACInstance {
         }
 
         let secrets = InstanceSecrets::new_from_seed(seed);
-        let (fgc_flat, fgc_indices, sgc_flat, sgc_indices) = read_flat_gc();
+        let (fgc_flat, fgc_indices, sgc_flat, sgc_indices) = read_compact_gc();
 
         // FGC
         let (fgc_ciphertext, fgc_output_labels) = {
@@ -113,7 +113,7 @@ impl CACInstance {
         }
 
         let secrets = InstanceSecrets::new_from_seed(seed);
-        let (fgc_flat, fgc_indices, sgc_flat, sgc_indices) = read_flat_gc();
+        let (fgc_flat, fgc_indices, sgc_flat, sgc_indices) = read_compact_gc();
 
         // FGC: flat garble — no Rc/RefCell, no evaluate pass, cache-friendly.
         let (com_fgc, fgc_output_labels) = {
@@ -357,7 +357,7 @@ mod tests {
         let constant_labels = instance.get_2_circuit_constant_labels();
         let pi1_labels = instance.compute_pi1_labels_based_on_value(proof.a);
         let x_d_labels = instance.compute_x_d_labels_based_on_value(dynamic_inputs);
-        let (mut fgc, fgc_indices, mut sgc, sgc_indices) = crate::gc::read_fresh_gc();
+        let (mut fgc, fgc_indices, mut sgc, sgc_indices) = crate::gc::read_flat_original_gc();
 
         // evaluate the fgc to get the r * pi_1
         set_gc_const_labels(&mut fgc, &constant_labels[0]);

@@ -1,12 +1,20 @@
 /// One-time binary to compile, compact, and write the garbled circuit artifacts.
 ///
-/// Produces:
-///   fgc_gates.bin + fgc_out_indices.bin   (FGC — evaluates ū(π₁))
-///   sgc_gates.bin + sgc_out_indices.bin   (SGC Part 1 — evaluates Q = x_d·L₂ + B)
+/// Produces 8 artifact files:
+///   fgc_gates.bin + fgc_out_indices.bin             (FGC original — for read_flat_original_gc)
+///   fgc_compact_gates.bin + fgc_compact_out_indices.bin  (FGC compact — for read_compact_gc)
+///   sgc_gates.bin + sgc_out_indices.bin             (SGC original — for read_flat_original_gc)
+///   sgc_compact_gates.bin + sgc_compact_out_indices.bin  (SGC compact — for read_compact_gc)
 ///
-/// Output paths are controlled by env vars:
-///   FGC_GATES_PATH, FGC_OUT_INDICES_PATH, SGC_GATES_PATH, SGC_OUT_INDICES_PATH
-/// (defaulting to ./fgc_gates.bin etc. in the current working directory)
+/// Output paths are controlled by env vars (defaults shown):
+///   FGC_GATES_PATH=./fgc_gates.bin
+///   FGC_OUT_INDICES_PATH=./fgc_out_indices.bin
+///   FGC_COMPACT_GATES_PATH=./fgc_compact_gates.bin
+///   FGC_COMPACT_OUT_INDICES_PATH=./fgc_compact_out_indices.bin
+///   SGC_GATES_PATH=./sgc_gates.bin
+///   SGC_OUT_INDICES_PATH=./sgc_out_indices.bin
+///   SGC_COMPACT_GATES_PATH=./sgc_compact_gates.bin
+///   SGC_COMPACT_OUT_INDICES_PATH=./sgc_compact_out_indices.bin
 ///
 /// Run with:
 ///   cargo run --release --bin generate_artifacts

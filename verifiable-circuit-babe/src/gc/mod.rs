@@ -15,7 +15,7 @@ use garbled_snark_verifier::core::gate::{gate_garbled_with_delta, GateType};
 use garbled_snark_verifier::core::utils::SerializableGate;
 pub use utils::*;
 
-// ── Original artifact paths (unique wire IDs, used by read_fresh_gc) ─────────
+// ── Flat artifact paths (unique wire IDs, used by read_flat_original_gc) ──────────────
 // garbled_evaluate_without_delta requires each Wire to be the output of exactly
 // one gate. These are the pre-compaction artifacts that preserve that invariant.
 fn fgc_gates_path() -> String {
@@ -34,7 +34,7 @@ fn sgc_indices_path() -> String {
     std::env::var("SGC_OUT_INDICES_PATH").unwrap_or_else(|_| "./sgc_out_indices.bin".to_string())
 }
 
-// ── Compact artifact paths (slot-reused wire IDs, used by read_flat_gc) ───────
+// ── Compact artifact paths (slot-reused wire IDs, used by read_compact_gc) ───
 // Wire IDs are remapped to minimise FlatEvalBuffer size. Each slot may be reused
 // across gate steps (safe for Vec<[u8;16]> reads-before-write, not for RefCell).
 fn fgc_compact_gates_path() -> String {
@@ -55,7 +55,7 @@ fn sgc_compact_indices_path() -> String {
 
 // ── Flat circuit ──────────────────────────────────────────────────────────────
 
-/// Compact gate topology loaded once and shared read-only across all instances.
+/// Gate topology stored as a flat Vec of tuples — used by both compact and original paths.
 pub struct FlatGates {
     pub num_wires: usize,
     /// (wire_a_id, wire_b_id, wire_c_id, gate_type_u8, gid) — 20 bytes/gate,
@@ -145,16 +145,17 @@ impl FlatEvalBuffer {
     }
 }
 
-static FLAT_CIRCUIT_1: OnceLock<(FlatGates, Vec<usize>)> = OnceLock::new();
-static FLAT_CIRCUIT_2: OnceLock<(FlatGates, Vec<usize>)> = OnceLock::new();
+static COMPACT_CIRCUIT_1: OnceLock<(FlatGates, Vec<usize>)> = OnceLock::new();
+static COMPACT_CIRCUIT_2: OnceLock<(FlatGates, Vec<usize>)> = OnceLock::new();
 
-/// Load flat FGC and SGC gate data, cached on first call.
-/// Raw bytes are read once per OnceLock init then dropped — not retained in static memory.
-pub fn read_flat_gc() -> (
+/// Load compact FGC and SGC gate data into `FlatGates`, cached on first call.
+/// Wire IDs are slot-remapped to minimise `FlatEvalBuffer` size.
+/// Raw bytes are read once then dropped — not retained in static memory.
+pub fn read_compact_gc() -> (
     &'static FlatGates, &'static Vec<usize>,
     &'static FlatGates, &'static Vec<usize>,
 ) {
-    let (fgc_flat, fgc_idx) = FLAT_CIRCUIT_1.get_or_init(|| {
+    let (fgc_flat, fgc_idx) = COMPACT_CIRCUIT_1.get_or_init(|| {
         let gates_path = fgc_compact_gates_path();
         let indices_path = fgc_compact_indices_path();
         let gates_bytes = fs::read(&gates_path)
@@ -163,7 +164,7 @@ pub fn read_flat_gc() -> (
             .unwrap_or_else(|_| panic!("'{}' not found — run generate_compact_artifacts()", indices_path));
         flat_from_bytes(&gates_bytes, &idx_bytes)
     });
-    let (sgc_flat, sgc_idx) = FLAT_CIRCUIT_2.get_or_init(|| {
+    let (sgc_flat, sgc_idx) = COMPACT_CIRCUIT_2.get_or_init(|| {
         let gates_path = sgc_compact_gates_path();
         let indices_path = sgc_compact_indices_path();
         let gates_bytes = fs::read(&gates_path)
@@ -191,10 +192,10 @@ fn flat_from_bytes(gates_bytes: &[u8], output_indices_bytes: &[u8]) -> (FlatGate
 }
 
 /// Load both circuits as Rc/RefCell-based `Circuit` for evaluation.
-/// Reads from the ORIGINAL (non-compacted) artifacts — garbled_evaluate_without_delta
+/// Reads from the flat (original, non-compacted) artifacts — garbled_evaluate_without_delta
 /// requires each Wire to be the output of exactly one gate, which slot-reused
-/// compacted wire IDs would violate.
-pub fn read_fresh_gc() -> (Circuit, Vec<usize>, Circuit, Vec<usize>) {
+/// compact wire IDs would violate.
+pub fn read_flat_original_gc() -> (Circuit, Vec<usize>, Circuit, Vec<usize>) {
     let fgc_gates_bytes = fs::read(fgc_gates_path())
         .unwrap_or_else(|_| panic!("'{}' not found — run generate_compact_artifacts()", fgc_gates_path()));
     let fgc_idx_bytes = fs::read(fgc_indices_path())
@@ -233,4 +234,69 @@ fn deserialize_circuit(gates_bytes: &[u8], output_indices_bytes: &[u8]) -> (Circ
     }).collect();
 
     (Circuit(wires, gates), output_indices)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify that compact artifacts produce identical ciphertexts and output labels
+    /// to the original (non-compacted) artifacts given the same pre-initialized labels.
+    ///
+    /// This confirms that liveness compaction is a pure wire-ID renaming — it does not
+    /// change any gate function, gate order, or computed label value.
+    ///
+    /// Requires artifacts on disk — run `cargo run --release --bin generate_artifacts` first.
+    #[test]
+    #[ignore]
+    fn test_compact_garbling_matches_original() {
+        let delta = [0xAAu8; 16];
+
+        // ── FGC ──────────────────────────────────────────────────────────────
+        let (fgc_compact, fgc_compact_idx, sgc_compact, sgc_compact_idx) = read_compact_gc();
+
+        let fgc_bytes = std::fs::read(fgc_gates_path())
+            .expect("fgc_gates.bin missing — run generate_compact_artifacts first");
+        let fgc_idx = std::fs::read(fgc_indices_path())
+            .expect("fgc_out_indices.bin missing");
+        let (fgc_orig, fgc_orig_idx) = flat_from_bytes(&fgc_bytes, &fgc_idx);
+
+        let mut buf_compact = FlatEvalBuffer::new(fgc_compact.num_wires);
+        let mut buf_orig    = FlatEvalBuffer::new(fgc_orig.num_wires);
+        for i in 0..FGC_NUM_PRE_INITIALIZED {
+            // Deterministic distinct label per pre-initialized wire
+            let label = [i as u8, (i >> 8) as u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
+            buf_compact.set_label(i, label);
+            buf_orig.set_label(i, label);
+        }
+
+        let (ct_compact, out_compact) = buf_compact.garble_and_collect(fgc_compact, fgc_compact_idx, delta);
+        let (ct_orig,    out_orig)    = buf_orig.garble_and_collect(&fgc_orig, &fgc_orig_idx, delta);
+
+        assert_eq!(ct_compact, ct_orig,    "FGC: ciphertexts differ (compact vs original)");
+        assert_eq!(out_compact, out_orig,  "FGC: output labels differ");
+        println!("FGC: compact garbling matches original ✓");
+
+        // ── SGC ──────────────────────────────────────────────────────────────
+        let sgc_bytes = std::fs::read(sgc_gates_path())
+            .expect("sgc_gates.bin missing");
+        let sgc_idx = std::fs::read(sgc_indices_path())
+            .expect("sgc_out_indices.bin missing");
+        let (sgc_orig, sgc_orig_idx) = flat_from_bytes(&sgc_bytes, &sgc_idx);
+
+        let mut buf_compact = FlatEvalBuffer::new(sgc_compact.num_wires);
+        let mut buf_orig    = FlatEvalBuffer::new(sgc_orig.num_wires);
+        for i in 0..SGC_NUM_PRE_INITIALIZED {
+            let label = [i as u8, (i >> 8) as u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
+            buf_compact.set_label(i, label);
+            buf_orig.set_label(i, label);
+        }
+
+        let (ct_compact, out_compact) = buf_compact.garble_and_collect(sgc_compact, sgc_compact_idx, delta);
+        let (ct_orig,    out_orig)    = buf_orig.garble_and_collect(&sgc_orig, &sgc_orig_idx, delta);
+
+        assert_eq!(ct_compact, ct_orig,    "SGC: ciphertexts differ (compact vs original)");
+        assert_eq!(out_compact, out_orig,  "SGC: output labels differ");
+        println!("SGC: compact garbling matches original ✓");
+    }
 }

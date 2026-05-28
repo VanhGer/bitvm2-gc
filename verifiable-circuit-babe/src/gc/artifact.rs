@@ -94,7 +94,7 @@ fn remap_wire_ids(
 
         // Allocate output slot BEFORE freeing inputs. This guarantees c's slot never
         // equals a's or b's slot within the same gate — required for the Rc<RefCell<Wire>>
-        // circuit representation (read_fresh_gc), where wire_a and wire_c sharing a slot
+        // circuit representation (read_flat_original_gc), where wire_a and wire_c sharing a slot
         // would cause a simultaneous-borrow panic.
         let slot = free_list.pop().unwrap_or_else(|| {
             let s = next_fresh;
@@ -184,7 +184,7 @@ pub fn generate_compact_artifacts(l2_point: G1Affine) -> [CircuitStats; 2] {
         compile_to_flat(bld.build(&[]), fgc_out_idx);
     let fgc_wires_orig = fgc_num_wires as usize;
 
-    // Write original (non-compacted) artifacts for read_fresh_gc() BEFORE remapping.
+    // Write original (non-compacted) artifacts for read_flat_original_gc() BEFORE remapping.
     // garbled_evaluate_without_delta requires each Wire to be the output of exactly
     // one gate; slot reuse would break its single-pass global-state assumption.
     write_circuit(fgc_num_wires, &fgc_gates, &fgc_out_idx,
