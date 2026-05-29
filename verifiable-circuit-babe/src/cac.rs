@@ -21,6 +21,8 @@ pub struct CACSetupPackage {
 /// Derive the finalized instance indices deterministically from the committed values.
 /// Note that in practice, prover doesnt need to use this. Instead, he can generate indices
 /// using random.
+// TODO: fold a session nonce into this hash once Bitcoin transaction integration is complete,
+// to prevent replay across protocol runs that share the same CACSetupPackage.
 pub fn cac_finalize_indices(package: &CACSetupPackage, m_cc: usize) -> Vec<usize> {
     let n_cc = package.commits.len();
     assert!(m_cc <= n_cc, "m_cc ({m_cc}) must be <= n_cc ({n_cc})");

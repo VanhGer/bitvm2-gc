@@ -130,6 +130,8 @@ pub struct BabeCACE2ERun {
 
 /// Verifier: create N_CC instances and commit. Returns the verifier (retains all private state)
 /// and the public `CACSetupPackage` to send to the Prover.
+// TODO: bind a session nonce into CACSetupPackage and cac_finalize_indices hash once
+// Bitcoin transaction integration is complete, to prevent replay of a previous protocol run.
 pub fn babe_verifier_cac_setup(
     vk: &Groth16VerifyingKey<Bn254>,
     static_public_inputs: Fr,

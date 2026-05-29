@@ -42,6 +42,18 @@ impl SparseAdaptorTable {
         assert_eq!(rhos.len(), N);
         assert_eq!(fq_deltas.len(), N);
 
+        #[cfg(debug_assertions)]
+        {
+            use ark_bn254::G1Projective;
+            let mut sum = G1Projective::zero();
+            let mut pw = Fr::from(1u64);
+            for rho in rhos {
+                sum += G1Projective::from(*rho) * pw;
+                pw += pw;
+            }
+            debug_assert!(sum.is_zero(), "ρ constraint ∑ 2^i·ρ_i = O violated");
+        }
+
         let r_bits = garbled_snark_verifier::dv_bn254::fr::Fr::to_bits(r);
         let col_indices = nonzero_col_indices();
         let prf_cache: Vec<Fq> = (0..U_BAR_SIZE).map(|k| prf_fq(&labels[2 * k + 1])).collect();
@@ -146,6 +158,8 @@ impl SparseAdaptorTable {
             .iter()
             .map(|entry| {
                 let dec_row = |row: &SparseAdaptorRow, j: usize| -> Fq {
+                    // Per-entry integrity is guaranteed by the com_adaptor SHA256 commitment
+                    // verified in verify_finalized_instances; no additional MAC is needed.
                     let raw: Fq = col_indices[j]
                         .iter()
                         .zip(row.cts.iter())

@@ -310,6 +310,11 @@ pub fn set_gc_const_labels(
     circuit: &mut Circuit,
     constant_labels: &[S],
 ) {
+    assert!(
+        constant_labels.len() <= circuit.0.len(),
+        "constant_labels ({}) exceeds circuit wire count ({})",
+        constant_labels.len(), circuit.0.len()
+    );
     for i in 0..constant_labels.len() {
         circuit.0[i].borrow_mut().label = Some(constant_labels[i]);
     }

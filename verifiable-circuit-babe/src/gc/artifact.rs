@@ -137,7 +137,7 @@ fn write_circuit(
     let serializable: Vec<SerializableGate> = gates.iter().map(|&(a, b, c, gt, gid)| {
         SerializableGate { wire_a_id: a, wire_b_id: b, wire_c_id: c, gate_type: gt, gid }
     }).collect();
-    let gates_bytes = bincode::serialize(&(num_wires, &serializable)).expect("serialize gates");
+    let gates_bytes = bincode::serialize(&(super::ARTIFACT_VERSION, num_wires, &serializable)).expect("serialize gates");
     fs::write(gates_path, &gates_bytes).expect("write gates");
     let idx_bytes = bincode::serialize(&output_indices).expect("serialize indices");
     fs::write(indices_path, &idx_bytes).expect("write indices");

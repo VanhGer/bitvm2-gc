@@ -329,8 +329,13 @@ impl BABEProver {
             weight += weight;
         }
 
+        let result = sum.into_affine();
+        assert!(
+            result.is_on_curve() && result.is_in_correct_subgroup_assuming_on_curve(),
+            "adaptor eval: result is not a valid G1 point"
+        );
         let mut ct = Vec::new();
-        sum.into_affine().serialize_compressed(&mut ct).expect("serialize r·G1P");
+        result.serialize_compressed(&mut ct).expect("serialize r·G1P");
         ct
 
     }

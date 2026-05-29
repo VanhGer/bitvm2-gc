@@ -15,6 +15,15 @@ use garbled_snark_verifier::core::gate::{gate_garbled_with_delta, GateType};
 use garbled_snark_verifier::core::utils::SerializableGate;
 pub use utils::*;
 
+/// Increment this whenever the circuit compilation or artifact serialization format changes.
+/// Both readers (`flat_from_bytes`, `deserialize_circuit`) assert this value matches what
+/// is stored on disk; a mismatch means stale artifacts — re-run `generate_artifacts`.
+pub const ARTIFACT_VERSION: u32 = 1;
+
+/// Hard upper bound on `num_wires` read from an artifact file.
+/// Prevents a crafted or corrupted file from triggering a multi-GB allocation.
+const MAX_CIRCUIT_WIRES: u32 = 50_000_000;
+
 // ── Flat artifact paths (unique wire IDs, used by read_flat_original_gc) ──────────────
 // garbled_evaluate_without_delta requires each Wire to be the output of exactly
 // one gate. These are the pre-compaction artifacts that preserve that invariant.
@@ -70,6 +79,10 @@ pub struct FlatEvalBuffer {
 
 impl FlatEvalBuffer {
     pub fn new(num_wires: usize) -> Self {
+        assert!(
+            num_wires <= MAX_CIRCUIT_WIRES as usize,
+            "num_wires={num_wires} exceeds safety limit — artifact may be corrupted"
+        );
         Self { labels: vec![[0u8; 16]; num_wires] }
     }
 
@@ -177,8 +190,12 @@ pub fn read_compact_gc() -> (
 }
 
 fn flat_from_bytes(gates_bytes: &[u8], output_indices_bytes: &[u8]) -> (FlatGates, Vec<usize>) {
-    let (num_wires, gates_read): (u32, Vec<SerializableGate>) =
+    let (version, num_wires, gates_read): (u32, u32, Vec<SerializableGate>) =
         bincode::deserialize(gates_bytes).expect("deserialize gates");
+    assert!(
+        version == ARTIFACT_VERSION,
+        "artifact version {version} != expected {ARTIFACT_VERSION} — re-run: cargo run -r --bin generate_artifacts"
+    );
     let output_indices: Vec<usize> =
         bincode::deserialize(output_indices_bytes).expect("deserialize indices");
     let flat = FlatGates {
@@ -212,8 +229,12 @@ pub fn read_flat_original_gc() -> (Circuit, Vec<usize>, Circuit, Vec<usize>) {
 }
 
 fn deserialize_circuit(gates_bytes: &[u8], output_indices_bytes: &[u8]) -> (Circuit, Vec<usize>) {
-    let (num_wires, gates_read): (u32, Vec<SerializableGate>) =
+    let (version, num_wires, gates_read): (u32, u32, Vec<SerializableGate>) =
         bincode::deserialize(gates_bytes).expect("deserialize gates");
+    assert!(
+        version == ARTIFACT_VERSION,
+        "artifact version {version} != expected {ARTIFACT_VERSION} — re-run: cargo run -r --bin generate_artifacts"
+    );
     let output_indices: Vec<usize> =
         bincode::deserialize(output_indices_bytes).expect("deserialize indices");
 
