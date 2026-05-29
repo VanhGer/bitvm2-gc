@@ -159,18 +159,18 @@ pub fn read_compact_gc() -> (
         let gates_path = fgc_compact_gates_path();
         let indices_path = fgc_compact_indices_path();
         let gates_bytes = fs::read(&gates_path)
-            .unwrap_or_else(|_| panic!("'{}' not found — run generate_compact_artifacts()", gates_path));
+            .unwrap_or_else(|_| panic!("'{}' not found — run: cargo run -r --bin generate_artifacts", gates_path));
         let idx_bytes = fs::read(&indices_path)
-            .unwrap_or_else(|_| panic!("'{}' not found — run generate_compact_artifacts()", indices_path));
+            .unwrap_or_else(|_| panic!("'{}' not found — run: cargo run -r --bin generate_artifacts", indices_path));
         flat_from_bytes(&gates_bytes, &idx_bytes)
     });
     let (sgc_flat, sgc_idx) = COMPACT_CIRCUIT_2.get_or_init(|| {
         let gates_path = sgc_compact_gates_path();
         let indices_path = sgc_compact_indices_path();
         let gates_bytes = fs::read(&gates_path)
-            .unwrap_or_else(|_| panic!("'{}' not found — run generate_compact_artifacts()", gates_path));
+            .unwrap_or_else(|_| panic!("'{}' not found — run: cargo run -r --bin generate_artifacts", gates_path));
         let idx_bytes = fs::read(&indices_path)
-            .unwrap_or_else(|_| panic!("'{}' not found — run generate_compact_artifacts()", indices_path));
+            .unwrap_or_else(|_| panic!("'{}' not found — run: cargo run -r --bin generate_artifacts", indices_path));
         flat_from_bytes(&gates_bytes, &idx_bytes)
     });
     (fgc_flat, fgc_idx, sgc_flat, sgc_idx)
@@ -197,15 +197,15 @@ fn flat_from_bytes(gates_bytes: &[u8], output_indices_bytes: &[u8]) -> (FlatGate
 /// compact wire IDs would violate.
 pub fn read_flat_original_gc() -> (Circuit, Vec<usize>, Circuit, Vec<usize>) {
     let fgc_gates_bytes = fs::read(fgc_gates_path())
-        .unwrap_or_else(|_| panic!("'{}' not found — run generate_compact_artifacts()", fgc_gates_path()));
+        .unwrap_or_else(|_| panic!("'{}' not found — run: cargo run -r --bin generate_artifacts", fgc_gates_path()));
     let fgc_idx_bytes = fs::read(fgc_indices_path())
-        .unwrap_or_else(|_| panic!("'{}' not found — run generate_compact_artifacts()", fgc_indices_path()));
+        .unwrap_or_else(|_| panic!("'{}' not found — run: cargo run -r --bin generate_artifacts", fgc_indices_path()));
     let (fgc, fgc_indices) = deserialize_circuit(&fgc_gates_bytes, &fgc_idx_bytes);
 
     let sgc_gates_bytes = fs::read(sgc_gates_path())
-        .unwrap_or_else(|_| panic!("'{}' not found — run generate_compact_artifacts()", sgc_gates_path()));
+        .unwrap_or_else(|_| panic!("'{}' not found — run: cargo run -r --bin generate_artifacts", sgc_gates_path()));
     let sgc_idx_bytes = fs::read(sgc_indices_path())
-        .unwrap_or_else(|_| panic!("'{}' not found — run generate_compact_artifacts()", sgc_indices_path()));
+        .unwrap_or_else(|_| panic!("'{}' not found — run: cargo run -r --bin generate_artifacts", sgc_indices_path()));
     let (sgc, sgc_indices) = deserialize_circuit(&sgc_gates_bytes, &sgc_idx_bytes);
 
     (fgc, fgc_indices, sgc, sgc_indices)
