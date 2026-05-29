@@ -22,7 +22,7 @@ pub const ARTIFACT_VERSION: u32 = 1;
 
 /// Hard upper bound on `num_wires` read from an artifact file.
 /// Prevents a crafted or corrupted file from triggering a multi-GB allocation.
-const MAX_CIRCUIT_WIRES: u32 = 50_000_000;
+const MAX_CIRCUIT_WIRES: u32 = 1_000_000_000;
 
 // ── Flat artifact paths (unique wire IDs, used by read_flat_original_gc) ──────────────
 // garbled_evaluate_without_delta requires each Wire to be the output of exactly
