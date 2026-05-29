@@ -19,6 +19,12 @@ pub const WINDOW_ENTRIES: usize = 1 << WINDOW_BITS; // 256
 pub const PRECOMP_TABLE_BITS: usize = WINDOW_COUNT * WINDOW_ENTRIES * 2 * N;
 pub const SGC_PART1_CONSTANT_SIZE: usize = 2 + 2 * N; // 0/1 + B.
 
+/// Number of wires initialized before the garbling loop in each circuit.
+/// These are assigned slots 0..N-1 by the liveness allocator and must match
+/// the `set_label` indices used in `CACInstance::new_from_seed` / `commit_from_seed`.
+pub const FGC_NUM_PRE_INITIALIZED: usize = 2 + 2 * N;          // wire0, wire1, π_x(N), π_y(N)
+pub const SGC_NUM_PRE_INITIALIZED: usize = SGC_PART1_CONSTANT_SIZE + Fr::N_BITS; // wire0,1 + B + x_d
+
 
 // ── Circuit 1 / FGC ────────────────────────────────────────────────────────
 
